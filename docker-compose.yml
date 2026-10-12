@@ -1,0 +1,22 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: ticketpay-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ticketpay
+      POSTGRES_USER: ticketpay
+      POSTGRES_PASSWORD: ticketpay
+    ports:
+      # Host 5432 is taken by a native PostgreSQL service on this machine.
+      - "5433:5432"
+    volumes:
+      - ticketpay-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ticketpay -d ticketpay"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  ticketpay-pgdata:

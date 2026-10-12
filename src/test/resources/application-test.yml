@@ -1,0 +1,9 @@
+app:
+  hold:
+    ttl-minutes: 10
+    expiry-check-ms: 3600000
+
+logging:
+  level:
+    com.ticketpay: INFO
+    org.springframework.security: WARN
