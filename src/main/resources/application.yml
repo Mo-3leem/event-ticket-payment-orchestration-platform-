@@ -27,6 +27,11 @@ app:
     expiration-minutes: 15
   hold:
     ttl-minutes: 10
+  payment:
+    provider-timeout-ms: 5000
+    key-ttl-hours: 24
+    reclaim-after-seconds: 120
+    cleanup-interval-ms: 3600000
 
 management:
   endpoints:

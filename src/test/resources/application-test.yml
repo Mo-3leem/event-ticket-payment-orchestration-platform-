@@ -2,6 +2,11 @@ app:
   hold:
     ttl-minutes: 10
     expiry-check-ms: 3600000
+  payment:
+    provider-timeout-ms: 500
+    key-ttl-hours: 24
+    reclaim-after-seconds: 120
+    cleanup-interval-ms: 3600000
 
 logging:
   level:

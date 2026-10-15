@@ -27,4 +27,14 @@ public class TestHoldTimes {
     jdbc.update(
         "UPDATE bookings SET expires_at = ? WHERE id = ?", Timestamp.from(past), bookingId);
   }
+
+  public void backdateKeyCreated(UUID keyId, Instant past) {
+    jdbc.update(
+        "UPDATE idempotency_keys SET created_at = ? WHERE id = ?", Timestamp.from(past), keyId);
+  }
+
+  public void backdateKeyExpiry(UUID keyId, Instant past) {
+    jdbc.update(
+        "UPDATE idempotency_keys SET expires_at = ? WHERE id = ?", Timestamp.from(past), keyId);
+  }
 }

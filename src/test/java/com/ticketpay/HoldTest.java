@@ -113,13 +113,22 @@ class HoldTest extends BaseTest {
   @Transactional
   void same_physical_seat_is_independently_sellable_per_event() {
     // Find two event_seats sharing one physical seat_id but different event_ids.
+    // Both must be AVAILABLE: other tests legitimately commit SOLD seats, and the
+    // suite must stay green regardless of execution history.
     List<EventSeat> all = eventSeats.findAll();
-    EventSeat first = all.get(0);
-    UUID physicalSeatId = first.getSeat().getId();
-    List<EventSeat> siblings =
-        all.stream().filter(es -> es.getSeat().getId().equals(physicalSeatId)).toList();
-
-    assertThat(siblings).hasSize(2);
+    List<EventSeat> siblings = null;
+    for (EventSeat candidate : all) {
+      List<EventSeat> pair =
+          all.stream()
+              .filter(es -> es.getSeat().getId().equals(candidate.getSeat().getId()))
+              .toList();
+      if (pair.size() == 2
+          && pair.stream().allMatch(es -> es.getStatus() == EventSeatStatus.AVAILABLE)) {
+        siblings = pair;
+        break;
+      }
+    }
+    assertThat(siblings).isNotNull();
     assertThat(siblings.get(0).getEvent().getId())
         .isNotEqualTo(siblings.get(1).getEvent().getId());
 

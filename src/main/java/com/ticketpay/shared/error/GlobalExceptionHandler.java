@@ -42,6 +42,12 @@ public class GlobalExceptionHandler {
         .body(ApiError.of(400, "BAD_REQUEST", ex.getMessage(), correlationId()));
   }
 
+  @ExceptionHandler(UnprocessableException.class)
+  public ResponseEntity<ApiError> handleUnprocessable(UnprocessableException ex) {
+    return ResponseEntity.status(HttpStatus.UNPROCESSABLE_ENTITY)
+        .body(ApiError.of(422, "UNPROCESSABLE", ex.getMessage(), correlationId()));
+  }
+
   @ExceptionHandler(MethodArgumentNotValidException.class)
   public ResponseEntity<ApiError> handleValidation(MethodArgumentNotValidException ex) {
     List<ApiError.FieldError> errors =
