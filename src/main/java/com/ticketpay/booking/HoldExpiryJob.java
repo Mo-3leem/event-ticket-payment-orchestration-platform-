@@ -11,16 +11,19 @@ public class HoldExpiryJob {
   private static final Logger log = LoggerFactory.getLogger(HoldExpiryJob.class);
 
   private final HoldService holds;
+  private final BookingService bookings;
 
-  public HoldExpiryJob(HoldService holds) {
+  public HoldExpiryJob(HoldService holds, BookingService bookings) {
     this.holds = holds;
+    this.bookings = bookings;
   }
 
   @Scheduled(fixedDelayString = "${app.hold.expiry-check-ms:60000}")
   public void expire() {
-    int released = holds.releaseExpired();
-    if (released > 0) {
-      log.info("Released {} expired holds", released);
+    int releasedHolds = holds.releaseExpired();
+    int expiredBookings = bookings.expireBookings();
+    if (releasedHolds > 0 || expiredBookings > 0) {
+      log.info("Released {} expired holds, expired {} bookings", releasedHolds, expiredBookings);
     }
   }
 }

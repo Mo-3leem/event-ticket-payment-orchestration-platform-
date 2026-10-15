@@ -33,6 +33,16 @@ class CatalogTest extends BaseTest {
   }
 
   @Test
+  void get_event_by_id_returns_event() throws Exception {
+    Event event = events.findAll().stream().findFirst().orElseThrow();
+    mvc.perform(get("/api/v1/events/" + event.getId()))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.id").value(event.getId().toString()))
+        .andExpect(jsonPath("$.title").value(event.getTitle()))
+        .andExpect(jsonPath("$.priceMinor").value(event.getPriceMinor()));
+  }
+
+  @Test
   void unknown_event_returns_404() throws Exception {
     mvc.perform(get("/api/v1/events/" + UUID.randomUUID() + "/seats"))
         .andExpect(status().isNotFound())

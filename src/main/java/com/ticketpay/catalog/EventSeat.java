@@ -92,6 +92,11 @@ public class EventSeat {
     this.updatedAt = Instant.now();
   }
 
+  public void markSold() {
+    this.status = EventSeatStatus.SOLD;
+    this.updatedAt = Instant.now();
+  }
+
   public boolean isHoldExpired(Instant now) {
     return status == EventSeatStatus.HELD && holdExpiresAt != null && !holdExpiresAt.isAfter(now);
   }

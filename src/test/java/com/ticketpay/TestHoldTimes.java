@@ -22,4 +22,9 @@ public class TestHoldTimes {
         Timestamp.from(past),
         eventSeatId);
   }
+
+  public void expireBookingInPast(UUID bookingId, Instant past) {
+    jdbc.update(
+        "UPDATE bookings SET expires_at = ? WHERE id = ?", Timestamp.from(past), bookingId);
+  }
 }
