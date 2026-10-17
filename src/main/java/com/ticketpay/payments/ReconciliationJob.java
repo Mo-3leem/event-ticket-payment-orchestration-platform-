@@ -1,0 +1,33 @@
+package com.ticketpay.payments;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.stereotype.Component;
+
+/**
+ * Periodic reconciliation of ambiguous payments. Each cycle processes a bounded
+ * batch; every payment resolves in its own transaction. Safe to overlap with live
+ * payment completions and booking expiry — all outcomes are re-verified under row
+ * locks. Multi-instance deployments would duplicate work (not corrupt it); fencing
+ * that requires shared infrastructure is deliberately out of scope.
+ */
+@Component
+public class ReconciliationJob {
+
+  private static final Logger log = LoggerFactory.getLogger(ReconciliationJob.class);
+
+  private final ReconciliationService reconciliation;
+
+  public ReconciliationJob(ReconciliationService reconciliation) {
+    this.reconciliation = reconciliation;
+  }
+
+  @Scheduled(fixedDelayString = "${app.reconciliation.interval-ms:300000}")
+  public void reconcile() {
+    int resolved = reconciliation.reconcileBatch();
+    if (resolved > 0) {
+      log.info("Reconciled {} ambiguous payments", resolved);
+    }
+  }
+}

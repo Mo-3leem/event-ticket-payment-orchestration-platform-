@@ -45,6 +45,9 @@ public class Payment {
   @Column(name = "note", length = 200)
   private String note;
 
+  @Column(name = "last_reconciled_at")
+  private Instant lastReconciledAt;
+
   @Column(name = "created_at", nullable = false, updatable = false)
   private Instant createdAt;
 
@@ -97,6 +100,16 @@ public class Payment {
     return note;
   }
 
+  public Instant getLastReconciledAt() {
+    return lastReconciledAt;
+  }
+
+  /** Bookkeeping only: records that a reconciliation pass examined this payment. */
+  public void touchReconciled(Instant now) {
+    this.lastReconciledAt = now;
+    this.updatedAt = now;
+  }
+
   public void authorize() {
     if (status != PaymentStatus.CREATED) {
       throw new IllegalStateException("Only CREATED payments can start authorizing");
@@ -106,16 +119,20 @@ public class Payment {
   }
 
   public void succeed() {
-    if (status != PaymentStatus.AUTHORIZING && status != PaymentStatus.CREATED) {
-      throw new IllegalStateException("Only AUTHORIZING payments can succeed");
+    if (status != PaymentStatus.AUTHORIZING
+        && status != PaymentStatus.CREATED
+        && status != PaymentStatus.UNKNOWN) {
+      throw new IllegalStateException("Only AUTHORIZING or UNKNOWN payments can succeed");
     }
     this.status = PaymentStatus.SUCCEEDED;
     this.updatedAt = Instant.now();
   }
 
   public void fail(String reason) {
-    if (status != PaymentStatus.AUTHORIZING && status != PaymentStatus.CREATED) {
-      throw new IllegalStateException("Only AUTHORIZING payments can fail");
+    if (status != PaymentStatus.AUTHORIZING
+        && status != PaymentStatus.CREATED
+        && status != PaymentStatus.UNKNOWN) {
+      throw new IllegalStateException("Only AUTHORIZING or UNKNOWN payments can fail");
     }
     this.status = PaymentStatus.FAILED;
     this.note = reason;

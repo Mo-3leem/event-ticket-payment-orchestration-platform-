@@ -32,6 +32,10 @@ app:
     key-ttl-hours: 24
     reclaim-after-seconds: 120
     cleanup-interval-ms: 3600000
+  reconciliation:
+    min-age-minutes: 10
+    batch-size: 50
+    interval-ms: 300000
 
 management:
   endpoints:

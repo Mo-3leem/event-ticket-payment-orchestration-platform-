@@ -341,6 +341,10 @@ class PaymentsTest extends BaseTest {
     assertThat(bodies.stream().distinct().count()).isEqualTo(1);
     assertThat(mock.getProcessedCount()).isEqualTo(1);
     assertThat(paymentRepo.count()).isEqualTo(paymentsBefore + 1);
+
+    // Test-teardown: the winning booking is CONFIRMED (seat SOLD); remove the
+    // committed footprint so the shared seed stays reusable.
+    holdTimes.releaseCommittedBooking(bookingId);
   }
 
   @Test
