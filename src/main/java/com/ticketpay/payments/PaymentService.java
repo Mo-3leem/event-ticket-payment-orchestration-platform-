@@ -190,11 +190,17 @@ public class PaymentService {
     };
   }
 
-  /** Deletes only expired keys whose payment reached SUCCEEDED/FAILED (or orphan keys). */
+  /**
+   * Deletes only expired keys whose payment reached a terminal state (SUCCEEDED,
+   * FAILED, or REFUNDED — a refunded payment is definitively done) or orphan keys.
+   * UNKNOWN-payment keys are still retained, and refund history rows are a separate
+   * table this cleanup never touches.
+   */
   @Transactional
   public int purgeExpiredKeys() {
     Instant cutoff = clock.instant().minusSeconds(keyTtlHours * 3600);
-    return keys.deleteExpiredTerminal(List.of(PaymentStatus.SUCCEEDED, PaymentStatus.FAILED), cutoff);
+    return keys.deleteExpiredTerminal(
+        List.of(PaymentStatus.SUCCEEDED, PaymentStatus.FAILED, PaymentStatus.REFUNDED), cutoff);
   }
 
   // ---- Tx1: durable intent ----

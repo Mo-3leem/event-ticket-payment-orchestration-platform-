@@ -41,4 +41,18 @@ public interface PaymentRepository extends JpaRepository<Payment, UUID> {
           + " order by p.createdAt asc")
   List<Payment> findReconciliable(
       PaymentStatus status, Instant cutoff, Pageable pageable);
+
+  /**
+   * Refund-required flag: captured payments whose booking expired at confirmation
+   * (BOOKING_EXPIRED_AT_CONFIRM note) and which have no refund attempt yet. Derived
+   * only — refunds start exclusively from the explicit Admin endpoint. FAILED
+   * refunds are terminal (no retry-after-FAILED in v1) so they never reappear.
+   * Deterministic ordering for stable pagination.
+   */
+  @Query(
+      "select p from Payment p where p.status = :status"
+          + " and p.note = 'BOOKING_EXPIRED_AT_CONFIRM'"
+          + " and not exists (select r from Refund r where r.payment.id = p.id)"
+          + " order by p.createdAt desc, p.id desc")
+  Page<Payment> findRefundRequired(PaymentStatus status, Pageable pageable);
 }

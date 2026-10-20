@@ -18,9 +18,11 @@ public class ReconciliationJob {
   private static final Logger log = LoggerFactory.getLogger(ReconciliationJob.class);
 
   private final ReconciliationService reconciliation;
+  private final RefundService refunds;
 
-  public ReconciliationJob(ReconciliationService reconciliation) {
+  public ReconciliationJob(ReconciliationService reconciliation, RefundService refunds) {
     this.reconciliation = reconciliation;
+    this.refunds = refunds;
   }
 
   @Scheduled(fixedDelayString = "${app.reconciliation.interval-ms:300000}")
@@ -28,6 +30,12 @@ public class ReconciliationJob {
     int resolved = reconciliation.reconcileBatch();
     if (resolved > 0) {
       log.info("Reconciled {} ambiguous payments", resolved);
+    }
+    // Recovery of already-stated refund intent only (aged REQUESTED/UNKNOWN rows).
+    // This never creates or executes a new refund — that requires explicit Admin action.
+    int refundResolved = refunds.reconcileRefundBatch();
+    if (refundResolved > 0) {
+      log.info("Reconciled {} ambiguous refunds", refundResolved);
     }
   }
 }

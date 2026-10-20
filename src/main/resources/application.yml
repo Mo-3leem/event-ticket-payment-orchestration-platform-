@@ -32,6 +32,10 @@ app:
     key-ttl-hours: 24
     reclaim-after-seconds: 120
     cleanup-interval-ms: 3600000
+  refund:
+    provider-timeout-ms: 5000
+    min-age-minutes: 10
+    batch-size: 50
   reconciliation:
     min-age-minutes: 10
     batch-size: 50

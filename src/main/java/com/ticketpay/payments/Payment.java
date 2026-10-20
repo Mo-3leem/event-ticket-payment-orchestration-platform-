@@ -147,6 +147,18 @@ public class Payment {
     this.updatedAt = Instant.now();
   }
 
+  /**
+   * Definitive full refund confirmed by the provider. Only a captured (SUCCEEDED)
+   * payment may reach this — declines and ambiguous results never do.
+   */
+  public void markRefunded() {
+    if (status != PaymentStatus.SUCCEEDED) {
+      throw new IllegalStateException("Only SUCCEEDED payments can be marked REFUNDED");
+    }
+    this.status = PaymentStatus.REFUNDED;
+    this.updatedAt = Instant.now();
+  }
+
   public void annotate(String note) {
     this.note = note;
     this.updatedAt = Instant.now();
@@ -155,7 +167,8 @@ public class Payment {
   public boolean isTerminal() {
     return status == PaymentStatus.SUCCEEDED
         || status == PaymentStatus.FAILED
-        || status == PaymentStatus.UNKNOWN;
+        || status == PaymentStatus.UNKNOWN
+        || status == PaymentStatus.REFUNDED;
   }
 
   public boolean isUnresolved() {
