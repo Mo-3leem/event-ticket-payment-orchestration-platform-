@@ -108,7 +108,7 @@ public class HoldService {
   @Transactional(readOnly = true)
   public Page<HoldResponse> myHolds(UUID userId, Pageable pageable) {
     return eventSeats
-        .findByHeldByUserIdAndStatusAndHoldExpiresAtAfter(
+        .findByHeldByUserIdAndStatusAndHoldExpiresAtAfterOrderByHoldExpiresAtAscIdAsc(
             userId, EventSeatStatus.HELD, clock.instant(), pageable)
         .map(
             seat ->

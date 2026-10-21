@@ -20,7 +20,7 @@ public interface BookingRepository extends JpaRepository<Booking, UUID> {
   @Lock(LockModeType.PESSIMISTIC_WRITE)
   List<Booking> findByStatusAndExpiresAtBefore(BookingStatus status, Instant cutoff);
 
-  Page<Booking> findByUserIdOrderByCreatedAtDesc(UUID userId, Pageable pageable);
+  Page<Booking> findByUserIdOrderByCreatedAtDescIdDesc(UUID userId, Pageable pageable);
 
   boolean existsByReference(String reference);
 }

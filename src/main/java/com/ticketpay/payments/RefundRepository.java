@@ -33,6 +33,6 @@ public interface RefundRepository extends JpaRepository<Refund, UUID> {
   @Query(
       "select r from Refund r where r.status in :statuses"
           + " and r.updatedAt < :cutoff"
-          + " order by r.updatedAt asc")
+          + " order by r.updatedAt asc, r.id asc")
   List<Refund> findReconciliable(List<RefundStatus> statuses, Instant cutoff, Pageable pageable);
 }

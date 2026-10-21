@@ -6,9 +6,10 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 /**
- * Retention cleanup for idempotency records. Only keys past TTL whose payment
- * reached SUCCEEDED/FAILED (or orphan keys with no payment) are removed — keys
- * of unresolved payments are retained so expiry can never authorize a new charge.
+ * Retention cleanup for idempotency records. Only keys past their expiry whose
+ * payment reached SUCCEEDED/FAILED/REFUNDED (or orphan keys with no payment) are
+ * removed — keys of unresolved payments are retained so expiry can never
+ * authorize a new charge.
  */
 @Component
 public class PaymentCleanupJob {

@@ -18,9 +18,9 @@ public interface EventSeatRepository extends JpaRepository<EventSeat, UUID> {
   @Query("select es from EventSeat es where es.id = :id")
   Optional<EventSeat> findByIdForUpdate(UUID id);
 
-  List<EventSeat> findByEventId(UUID eventId);
+  List<EventSeat> findByEventIdOrderBySeatSeatCodeAsc(UUID eventId);
 
-  Page<EventSeat> findByHeldByUserIdAndStatusAndHoldExpiresAtAfter(
+  Page<EventSeat> findByHeldByUserIdAndStatusAndHoldExpiresAtAfterOrderByHoldExpiresAtAscIdAsc(
       UUID heldByUserId, EventSeatStatus status, Instant now, Pageable pageable);
 
   /**

@@ -26,6 +26,7 @@ import com.ticketpay.payments.Payment;
 import com.ticketpay.payments.PaymentProvider;
 import com.ticketpay.payments.PaymentRepository;
 import com.ticketpay.payments.PaymentService;
+import com.ticketpay.payments.PaymentStatus;
 import com.ticketpay.payments.ReconciliationRecordRepository;
 import com.ticketpay.payments.ReconciliationService;
 import com.ticketpay.payments.dto.ReviewNoteRequest;
@@ -46,6 +47,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
@@ -69,6 +71,7 @@ class ReconciliationTest extends BaseTest {
   @Autowired ReconciliationService reconciliation;
   @Autowired MockPaymentProvider mock;
   @Autowired TestHoldTimes holdTimes;
+  @Autowired JdbcTemplate jdbc;
   @PersistenceContext EntityManager em;
 
   @BeforeEach
@@ -398,6 +401,52 @@ class ReconciliationTest extends BaseTest {
 
     // Test-teardown: free the confirmed seat for future runs.
     holdTimes.releaseCommittedBooking(bookingId);
+  }
+
+  // ---- batch isolation ----
+
+  @Test
+  void batch_isolates_failing_payment_and_resolves_healthy_one() {
+    User user = newUser("payer", Role.USER);
+
+    // Healthy candidate: provider confirms, booking is still PENDING_PAYMENT.
+    UUID healthyBookingId = bookOneSeat(user.getId());
+    Payment healthy = seedAgedUnknown(user.getId(), healthyBookingId);
+    mock.rehearse(healthy.getProviderRef(), PaymentProvider.ChargeResult.ok());
+
+    // Poisoned candidate: provider confirms, but the seat was stolen/released while
+    // the booking stayed PENDING_PAYMENT -> confirmBooking conflicts and the item
+    // transaction rolls back.
+    EventSeat poisonedSeat = firstAvailableSeat();
+    holds.acquire(poisonedSeat.getId(), user.getId());
+    UUID poisonedBookingId =
+        bookings.createBooking(user.getId(), List.of(poisonedSeat.getId())).bookingId();
+    Payment poisoned = seedAgedUnknown(user.getId(), poisonedBookingId);
+    mock.rehearse(poisoned.getProviderRef(), PaymentProvider.ChargeResult.ok());
+    jdbc.update(
+        "UPDATE event_seats SET status = 'AVAILABLE', held_by_user_id = NULL,"
+            + " hold_expires_at = NULL WHERE id = ?",
+        poisonedSeat.getId());
+
+    try {
+      int resolved = reconciliation.reconcileBatch();
+
+      // One bad row must never abort the pass: the healthy payment still resolves.
+      assertThat(resolved).isGreaterThanOrEqualTo(1);
+      assertThat(paymentRepo.findById(healthy.getId()).orElseThrow().getStatus())
+          .isEqualTo(PaymentStatus.SUCCEEDED);
+      assertThat(bookingRepo.findById(healthyBookingId).orElseThrow().getStatus().name())
+          .isEqualTo("CONFIRMED");
+      // The poisoned payment rolled back its own transaction and stays recoverable.
+      assertThat(paymentRepo.findById(poisoned.getId()).orElseThrow().getStatus())
+          .isEqualTo(PaymentStatus.UNKNOWN);
+      assertThat(bookingRepo.findById(poisonedBookingId).orElseThrow().getStatus().name())
+          .isEqualTo("PENDING_PAYMENT");
+      assertThat(records.countByPaymentId(poisoned.getId())).isZero();
+    } finally {
+      holdTimes.releaseCommittedBooking(healthyBookingId);
+      holdTimes.releaseCommittedBooking(poisonedBookingId);
+    }
   }
 
   // ---- history, admin, review ----

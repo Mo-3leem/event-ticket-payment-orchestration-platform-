@@ -2,6 +2,7 @@ package com.ticketpay.booking;
 
 import com.ticketpay.booking.dto.HoldRequest;
 import com.ticketpay.booking.dto.HoldResponse;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import jakarta.validation.Valid;
 import java.util.UUID;
 import org.springframework.data.domain.Page;
@@ -20,6 +21,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @RequestMapping("/api/v1/holds")
+@SecurityRequirement(name = "bearerAuth")
 public class HoldController {
 
   private final HoldService holds;

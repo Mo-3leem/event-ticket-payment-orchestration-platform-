@@ -27,7 +27,7 @@ public class EventController {
 
   @GetMapping
   public Page<EventDto> list(@PageableDefault(size = 20) Pageable pageable) {
-    return events.findAll(pageable).map(this::toDto);
+    return events.findAllByOrderByStartsAtAscIdAsc(pageable).map(this::toDto);
   }
 
   @GetMapping("/{id}")
@@ -41,14 +41,13 @@ public class EventController {
     if (!events.existsById(id)) {
       throw new NotFoundException("Event not found");
     }
-    return eventSeats.findByEventId(id).stream()
+    return eventSeats.findByEventIdOrderBySeatSeatCodeAsc(id).stream()
         .map(
             es ->
                 new EventSeatDto(
                     es.getId(),
                     es.getSeat().getSeatCode(),
                     es.getStatus().name(),
-                    es.getHeldByUserId(),
                     es.getHoldExpiresAt()))
         .toList();
   }

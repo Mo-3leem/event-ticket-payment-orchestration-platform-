@@ -7,7 +7,10 @@ import org.springframework.data.jpa.repository.JpaRepository;
 
 public interface ReconciliationRecordRepository extends JpaRepository<ReconciliationRecord, UUID> {
 
-  Page<ReconciliationRecord> findByPaymentIdOrderByCreatedAtDesc(UUID paymentId, Pageable pageable);
+  Page<ReconciliationRecord> findByPaymentIdOrderByCreatedAtDescIdDesc(
+      UUID paymentId, Pageable pageable);
+
+  Page<ReconciliationRecord> findAllByOrderByCreatedAtDescIdDesc(Pageable pageable);
 
   long countByPaymentId(UUID paymentId);
 }

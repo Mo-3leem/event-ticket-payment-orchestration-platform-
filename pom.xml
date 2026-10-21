@@ -15,8 +15,9 @@
   <artifactId>ticketpay</artifactId>
   <version>0.0.1-SNAPSHOT</version>
   <packaging>jar</packaging>
-  <name>Event Ticket &amp; Payment Orchestration Platform (Day 1)</name>
-  <description>Day 1: auth, catalog, event-specific inventory, transactional holds.</description>
+  <name>Event Ticket &amp; Payment Orchestration Platform</name>
+  <description>Event ticketing with transactional seat holds, bookings, mock-provider
+    payment orchestration, reconciliation, and Admin-driven refunds.</description>
 
   <properties>
     <java.version>21</java.version>
@@ -96,10 +97,9 @@
     </dependency>
   </dependencies>
 
-  <!-- Day 1 note: Testcontainers dependencies intentionally omitted. The installed
-       Docker Desktop answers Testcontainers' version negotiation with HTTP 400,
-       so tests run against Compose-backed PostgreSQL instead (same engine,
-       same locking semantics). Revisit on Day 5 only if time remains. -->
+  <!-- Testcontainers is intentionally not used: the local Docker Desktop Engine API
+       proxy rejects Testcontainers' version negotiation. Integration tests run against
+       the Compose-backed PostgreSQL (same engine and locking semantics). -->
 
   <build>
     <plugins>

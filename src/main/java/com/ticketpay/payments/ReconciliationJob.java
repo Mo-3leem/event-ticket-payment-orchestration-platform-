@@ -27,15 +27,24 @@ public class ReconciliationJob {
 
   @Scheduled(fixedDelayString = "${app.reconciliation.interval-ms:300000}")
   public void reconcile() {
-    int resolved = reconciliation.reconcileBatch();
-    if (resolved > 0) {
-      log.info("Reconciled {} ambiguous payments", resolved);
+    // Each cycle is isolated: a failing charge pass must never skip refund recovery.
+    try {
+      int resolved = reconciliation.reconcileBatch();
+      if (resolved > 0) {
+        log.info("Reconciled {} ambiguous payments", resolved);
+      }
+    } catch (RuntimeException failure) {
+      log.error("Charge reconciliation cycle failed", failure);
     }
     // Recovery of already-stated refund intent only (aged REQUESTED/UNKNOWN rows).
     // This never creates or executes a new refund — that requires explicit Admin action.
-    int refundResolved = refunds.reconcileRefundBatch();
-    if (refundResolved > 0) {
-      log.info("Reconciled {} ambiguous refunds", refundResolved);
+    try {
+      int refundResolved = refunds.reconcileRefundBatch();
+      if (refundResolved > 0) {
+        log.info("Reconciled {} ambiguous refunds", refundResolved);
+      }
+    } catch (RuntimeException failure) {
+      log.error("Refund reconciliation cycle failed", failure);
     }
   }
 }

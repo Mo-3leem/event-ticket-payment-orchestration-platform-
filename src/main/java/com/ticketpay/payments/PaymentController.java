@@ -2,6 +2,7 @@ package com.ticketpay.payments;
 
 import com.ticketpay.payments.dto.InitiatePaymentRequest;
 import com.ticketpay.payments.dto.PaymentResponse;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import jakarta.validation.Valid;
 import java.util.Optional;
 import java.util.UUID;
@@ -21,6 +22,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @RequestMapping("/api/v1/payments")
+@SecurityRequirement(name = "bearerAuth")
 public class PaymentController {
 
   private final PaymentService payments;

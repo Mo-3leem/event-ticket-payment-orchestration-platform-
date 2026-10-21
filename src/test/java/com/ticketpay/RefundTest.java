@@ -592,9 +592,8 @@ class RefundTest extends BaseTest {
         mismatched.getAmountMinor() + 1,
         mismatched.getId());
     holdTimes.backdateRefundUpdated(mismatched.getId(), Instant.now().minusSeconds(11 * 60));
-    assertThatThrownBy(() -> refundService.reconcileRefundBatch())
-        .isInstanceOf(IllegalStateException.class)
-        .hasMessageContaining("does not match");
+    // Batch isolation: the guard still refuses the row, but no longer aborts the pass.
+    assertThat(refundService.reconcileRefundBatch()).isZero();
     assertThat(refundRepo.findById(mismatched.getId()).orElseThrow().getStatus())
         .isEqualTo(RefundStatus.REQUESTED);
     assertThat(paymentRepo.findById(other.getId()).orElseThrow().getStatus())
@@ -602,6 +601,44 @@ class RefundTest extends BaseTest {
     // Only the legitimate first refund ever reached the provider; the corrupted
     // row was refused by the guard (resolved via rehearsed lookup, no re-drive).
     assertThat(mock.getRefundProcessedCount()).isEqualTo(1);
+  }
+
+  // ---- 11b. batch isolation: a poisoned refund must not stall others ----
+
+  @Test
+  void refund_batch_isolates_poisoned_row_and_resolves_healthy_one() {
+    String email = "payer-" + UUID.randomUUID() + "@example.com";
+    users.save(new User(email, passwords.encode("password123"), Role.USER));
+    UUID userId = userIdOf(email);
+    UUID adminId = newUser("admin", Role.ADMIN).getId();
+    Payment healthyPayment = seedCapturedPayment(userId, "k-" + UUID.randomUUID());
+    Payment poisonedPayment = seedCapturedPayment(userId, "k-" + UUID.randomUUID());
+    try {
+      Refund healthy = seedRefundRow(healthyPayment, adminId, "healthy");
+      Refund poisoned = seedRefundRow(poisonedPayment, adminId, "poisoned");
+      jdbc.update(
+          "UPDATE refunds SET amount_minor = amount_minor + 1 WHERE id = ?", poisoned.getId());
+      Instant aged = Instant.now().minusSeconds(11 * 60);
+      holdTimes.backdateRefundUpdated(healthy.getId(), aged);
+      holdTimes.backdateRefundUpdated(poisoned.getId(), aged);
+
+      int resolved = refundService.reconcileRefundBatch();
+
+      // The healthy refund resolved; the corrupted one failed in isolation.
+      assertThat(resolved).isGreaterThanOrEqualTo(1);
+      assertThat(refundRepo.findById(healthy.getId()).orElseThrow().getStatus())
+          .isEqualTo(RefundStatus.SUCCEEDED);
+      assertThat(paymentRepo.findById(healthyPayment.getId()).orElseThrow().getStatus())
+          .isEqualTo(PaymentStatus.REFUNDED);
+      assertThat(refundRepo.findById(poisoned.getId()).orElseThrow().getStatus())
+          .isEqualTo(RefundStatus.REQUESTED);
+      assertThat(paymentRepo.findById(poisonedPayment.getId()).orElseThrow().getStatus())
+          .isEqualTo(PaymentStatus.SUCCEEDED);
+      assertThat(refundCompletedCount(poisonedPayment.getId())).isZero();
+    } finally {
+      holdTimes.releaseCommittedBooking(healthyPayment.getBookingId());
+      holdTimes.releaseCommittedBooking(poisonedPayment.getBookingId());
+    }
   }
 
   // ---- 12. non-admin access ----
@@ -814,34 +851,34 @@ class RefundTest extends BaseTest {
     mock.setRefundGate(gate);
     ExecutorService pool = Executors.newFixedThreadPool(2);
     CountDownLatch start = new CountDownLatch(1);
-    Future<RefundResponse> live =
-        pool.submit(
-            () -> {
-              start.await();
-              return refundService.initiateRefund(adminId, payment.getId(), "live vs recovery");
-            });
-    start.countDown();
-
-    // Tx1 committed and the live Admin call is parked pre-execution.
-    awaitTrue("live refund parked at provider gate", () -> mock.getRefundParkedCount() == 1);
-    Refund refund = refundRepo.findByPaymentId(payment.getId()).orElseThrow();
-    holdTimes.backdateRefundUpdated(refund.getId(), Instant.now().minusSeconds(11 * 60));
-
-    // Recovery worker: aged + empty lookup -> documented same-reference re-drive,
-    // parking alongside the live call before either executes.
-    Future<Integer> recovery =
-        pool.submit(
-            () -> {
-              start.await();
-              return refundService.reconcileRefundBatch();
-            });
-    awaitTrue("recovery re-drive parked at provider gate", () -> mock.getRefundParkedCount() == 2);
-
-    // Release both at once: the per-reference monitor must admit exactly one
-    // execution (dedupe), and the refund row lock must admit exactly one
-    // finalization (terminal transition + REFUND_COMPLETED record).
-    gate.countDown();
     try {
+      Future<RefundResponse> live =
+          pool.submit(
+              () -> {
+                start.await();
+                return refundService.initiateRefund(adminId, payment.getId(), "live vs recovery");
+              });
+      start.countDown();
+
+      // Tx1 committed and the live Admin call is parked pre-execution.
+      awaitTrue("live refund parked at provider gate", () -> mock.getRefundParkedCount() == 1);
+      Refund refund = refundRepo.findByPaymentId(payment.getId()).orElseThrow();
+      holdTimes.backdateRefundUpdated(refund.getId(), Instant.now().minusSeconds(11 * 60));
+
+      // Recovery worker: aged + empty lookup -> documented same-reference re-drive,
+      // parking alongside the live call before either executes.
+      Future<Integer> recovery =
+          pool.submit(
+              () -> {
+                start.await();
+                return refundService.reconcileRefundBatch();
+              });
+      awaitTrue("recovery re-drive parked at provider gate", () -> mock.getRefundParkedCount() == 2);
+
+      // Release both at once: the per-reference monitor must admit exactly one
+      // execution (dedupe), and the refund row lock must admit exactly one
+      // finalization (terminal transition + REFUND_COMPLETED record).
+      gate.countDown();
       RefundResponse liveOutcome = live.get(30, TimeUnit.SECONDS);
       int resolved = recovery.get(30, TimeUnit.SECONDS);
 

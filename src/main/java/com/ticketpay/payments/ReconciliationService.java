@@ -12,6 +12,8 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -33,6 +35,8 @@ import org.springframework.transaction.support.TransactionTemplate;
  */
 @Service
 public class ReconciliationService {
+
+  private static final Logger log = LoggerFactory.getLogger(ReconciliationService.class);
 
   private final PaymentRepository payments;
   private final ReconciliationRecordRepository records;
@@ -82,8 +86,22 @@ public class ReconciliationService {
                     PaymentStatus.UNKNOWN, cutoff, PageRequest.of(0, batchSize)));
     int resolved = 0;
     for (Payment candidate : batch) {
-      if (reconcileOne(candidate.getId())) {
-        resolved++;
+      try {
+        if (reconcileOne(candidate.getId())) {
+          resolved++;
+        }
+      } catch (RuntimeException failure) {
+        // Per-item isolation: one malformed or conflicting row must not abort the
+        // rest of the batch. Back off the item so the same row is not hammered.
+        log.warn(
+            "Reconciliation failed for payment {}: {}",
+            candidate.getId(),
+            failure.toString());
+        try {
+          touchChecked(candidate.getId());
+        } catch (RuntimeException ignored) {
+          // Next cycle retries anyway; the batch continues regardless.
+        }
       }
     }
     return resolved;
@@ -119,8 +137,8 @@ public class ReconciliationService {
       UUID userId, Optional<PaymentStatus> status, Pageable pageable) {
     Page<Payment> page =
         status
-            .map(s -> payments.findByUserIdAndStatusOrderByCreatedAtDesc(userId, s, pageable))
-            .orElseGet(() -> payments.findByUserIdOrderByCreatedAtDesc(userId, pageable));
+            .map(s -> payments.findByUserIdAndStatusOrderByCreatedAtDescIdDesc(userId, s, pageable))
+            .orElseGet(() -> payments.findByUserIdOrderByCreatedAtDescIdDesc(userId, pageable));
     return page.map(this::toPaymentDto);
   }
 
@@ -128,8 +146,8 @@ public class ReconciliationService {
   public Page<PaymentResponse> adminPayments(Optional<PaymentStatus> status, Pageable pageable) {
     Page<Payment> page =
         status
-            .map(s -> payments.findByStatusOrderByCreatedAtDesc(s, pageable))
-            .orElseGet(() -> payments.findAll(pageable));
+            .map(s -> payments.findByStatusOrderByCreatedAtDescIdDesc(s, pageable))
+            .orElseGet(() -> payments.findAllByOrderByCreatedAtDescIdDesc(pageable));
     return page.map(this::toPaymentDto);
   }
 
@@ -137,8 +155,8 @@ public class ReconciliationService {
   public Page<ReconciliationRecordDto> recordHistory(Optional<UUID> paymentId, Pageable pageable) {
     Page<ReconciliationRecord> page =
         paymentId
-            .map(id -> records.findByPaymentIdOrderByCreatedAtDesc(id, pageable))
-            .orElseGet(() -> records.findAll(pageable));
+            .map(id -> records.findByPaymentIdOrderByCreatedAtDescIdDesc(id, pageable))
+            .orElseGet(() -> records.findAllByOrderByCreatedAtDescIdDesc(pageable));
     return page.map(this::toDto);
   }
 

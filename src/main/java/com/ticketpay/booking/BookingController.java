@@ -3,6 +3,7 @@ package com.ticketpay.booking;
 import com.ticketpay.booking.dto.BookingDto;
 import com.ticketpay.booking.dto.BookingResponse;
 import com.ticketpay.booking.dto.CreateBookingRequest;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import jakarta.validation.Valid;
 import java.util.UUID;
 import org.springframework.data.domain.Page;
@@ -19,6 +20,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @RequestMapping("/api/v1/bookings")
+@SecurityRequirement(name = "bearerAuth")
 public class BookingController {
 
   private final BookingService bookings;

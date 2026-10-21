@@ -91,7 +91,7 @@ class BookingTest extends BaseTest {
   private List<EventSeat> availableSeatsOfSameEvent(int n) {
     for (Event event : eventRepo.findAll()) {
       List<EventSeat> avail =
-          eventSeats.findByEventId(event.getId()).stream()
+          eventSeats.findByEventIdOrderBySeatSeatCodeAsc(event.getId()).stream()
               .filter(es -> es.getStatus() == EventSeatStatus.AVAILABLE)
               .limit(n)
               .toList();

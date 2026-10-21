@@ -177,7 +177,7 @@ public class BookingService {
   @Transactional(readOnly = true)
   public Page<BookingDto> myBookings(UUID userId, Pageable pageable) {
     return bookings
-        .findByUserIdOrderByCreatedAtDesc(userId, pageable)
+        .findByUserIdOrderByCreatedAtDescIdDesc(userId, pageable)
         .map(
             b ->
                 new BookingDto(

@@ -13,6 +13,8 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
@@ -42,6 +44,8 @@ import org.springframework.data.domain.Pageable;
  */
 @Service
 public class RefundService {
+
+  private static final Logger log = LoggerFactory.getLogger(RefundService.class);
 
   /** What actually changed, for batch counting and audit tests. */
   public record FinalizeOutcome(boolean changed, RefundResponse response) {}
@@ -256,8 +260,22 @@ public class RefundService {
                     PageRequest.of(0, batchSize)));
     int resolved = 0;
     for (Refund candidate : batch) {
-      if (reconcileOne(candidate.getId())) {
-        resolved++;
+      try {
+        if (reconcileOne(candidate.getId())) {
+          resolved++;
+        }
+      } catch (RuntimeException failure) {
+        // Per-item isolation: a poisoned refund row (corrupt ledger, vanished
+        // payment, provider contract violation) must not stall the rest of the batch.
+        log.warn(
+            "Refund reconciliation failed for {}: {}",
+            candidate.getId(),
+            failure.toString());
+        try {
+          touchRefund(candidate.getId());
+        } catch (RuntimeException ignored) {
+          // Next cycle retries anyway; the batch continues regardless.
+        }
       }
     }
     return resolved;

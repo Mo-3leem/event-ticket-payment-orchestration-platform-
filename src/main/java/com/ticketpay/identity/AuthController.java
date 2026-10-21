@@ -3,6 +3,7 @@ package com.ticketpay.identity;
 import com.ticketpay.identity.dto.AuthResponse;
 import com.ticketpay.identity.dto.LoginRequest;
 import com.ticketpay.identity.dto.RegisterRequest;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import jakarta.validation.Valid;
 import java.util.Map;
 import org.springframework.http.HttpStatus;
@@ -36,6 +37,7 @@ public class AuthController {
   }
 
   @GetMapping("/me")
+  @SecurityRequirement(name = "bearerAuth")
   public Map<String, String> me(Authentication authentication) {
     return Map.of("userId", authentication.getName());
   }

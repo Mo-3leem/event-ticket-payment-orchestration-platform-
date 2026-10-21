@@ -33,6 +33,16 @@ class CatalogTest extends BaseTest {
   }
 
   @Test
+  void public_inventory_never_exposes_holder_identity() throws Exception {
+    Event event = events.findAll().stream().findFirst().orElseThrow();
+    mvc.perform(get("/api/v1/events/" + event.getId() + "/seats"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$[0].heldByUserId").doesNotExist())
+        .andExpect(jsonPath("$[0].eventSeatId").exists())
+        .andExpect(jsonPath("$[0].seatCode").exists());
+  }
+
+  @Test
   void get_event_by_id_returns_event() throws Exception {
     Event event = events.findAll().stream().findFirst().orElseThrow();
     mvc.perform(get("/api/v1/events/" + event.getId()))

@@ -21,12 +21,14 @@ public interface PaymentRepository extends JpaRepository<Payment, UUID> {
   @Query("select p from Payment p where p.id = :id")
   Optional<Payment> findByIdForUpdate(UUID id);
 
-  Page<Payment> findByUserIdOrderByCreatedAtDesc(UUID userId, Pageable pageable);
+  Page<Payment> findByUserIdOrderByCreatedAtDescIdDesc(UUID userId, Pageable pageable);
 
-  Page<Payment> findByUserIdAndStatusOrderByCreatedAtDesc(
+  Page<Payment> findByUserIdAndStatusOrderByCreatedAtDescIdDesc(
       UUID userId, PaymentStatus status, Pageable pageable);
 
-  Page<Payment> findByStatusOrderByCreatedAtDesc(PaymentStatus status, Pageable pageable);
+  Page<Payment> findByStatusOrderByCreatedAtDescIdDesc(PaymentStatus status, Pageable pageable);
+
+  Page<Payment> findAllByOrderByCreatedAtDescIdDesc(Pageable pageable);
 
   /**
    * Aged UNKNOWN payments due for reconciliation. SKIP LOCKED lets concurrent workers
@@ -38,7 +40,7 @@ public interface PaymentRepository extends JpaRepository<Payment, UUID> {
   @Query(
       "select p from Payment p where p.status = :status"
           + " and (p.lastReconciledAt is null or p.lastReconciledAt < :cutoff)"
-          + " order by p.createdAt asc")
+          + " order by p.createdAt asc, p.id asc")
   List<Payment> findReconciliable(
       PaymentStatus status, Instant cutoff, Pageable pageable);
 

@@ -6,11 +6,17 @@ import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.Date;
 import javax.crypto.SecretKey;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 @Service
 public class JwtService {
+
+  private static final Logger log = LoggerFactory.getLogger(JwtService.class);
+  private static final String DEV_DEFAULT_SECRET =
+      "change-me-to-a-very-long-random-secret-for-dev-only-0123456789";
 
   private final SecretKey key;
   private final long expirationMinutes;
@@ -20,6 +26,11 @@ public class JwtService {
       @Value("${app.jwt.expiration-minutes:15}") long expirationMinutes) {
     if (secret == null || secret.length() < 32) {
       throw new IllegalArgumentException("JWT secret must be at least 32 characters");
+    }
+    if (DEV_DEFAULT_SECRET.equals(secret)) {
+      log.warn(
+          "Using the built-in development JWT secret. Set JWT_SECRET to a private,"
+              + " randomly generated value for any shared or production deployment.");
     }
     this.key = Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8));
     this.expirationMinutes = expirationMinutes;

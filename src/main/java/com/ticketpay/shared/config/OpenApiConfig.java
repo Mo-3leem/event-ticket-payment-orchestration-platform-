@@ -3,7 +3,6 @@ package com.ticketpay.shared.config;
 import io.swagger.v3.oas.models.Components;
 import io.swagger.v3.oas.models.OpenAPI;
 import io.swagger.v3.oas.models.info.Info;
-import io.swagger.v3.oas.models.security.SecurityRequirement;
 import io.swagger.v3.oas.models.security.SecurityScheme;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -16,10 +15,14 @@ public class OpenApiConfig {
     return new OpenAPI()
         .info(
             new Info()
-                .title("Event Ticket & Payment Orchestration Platform — Day 1")
-                .version("0.0.1")
-                .description("Auth, catalog, and transactional seat holds."))
-        .addSecurityItem(new SecurityRequirement().addList("bearerAuth"))
+                .title("Event Ticket & Payment Orchestration Platform")
+                .version("1.0.0")
+                .description(
+                    "Seat inventory with transactional holds, bookings, mock-provider payment"
+                        + " orchestration with idempotency, and Admin-driven reconciliation and"
+                        + " refunds. Public catalog endpoints are unauthenticated; everything"
+                        + " else requires a JWT bearer token, and /api/v1/admin/** requires"
+                        + " ROLE_ADMIN."))
         .components(
             new Components()
                 .addSecuritySchemes(

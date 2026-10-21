@@ -15,11 +15,17 @@ public class AuthService {
   private final UserRepository users;
   private final PasswordEncoder passwords;
   private final JwtService jwt;
+  /**
+   * Compared against when the email is unknown, so login latency does not reveal
+   * whether an account exists (BCrypt cost is paid either way).
+   */
+  private final String dummyHash;
 
   public AuthService(UserRepository users, PasswordEncoder passwords, JwtService jwt) {
     this.users = users;
     this.passwords = passwords;
     this.jwt = jwt;
+    this.dummyHash = passwords.encode(java.util.UUID.randomUUID().toString());
   }
 
   @Transactional
@@ -35,11 +41,10 @@ public class AuthService {
 
   @Transactional(readOnly = true)
   public AuthResponse login(LoginRequest request) {
-    User user =
-        users
-            .findByEmail(request.email().toLowerCase())
-            .orElseThrow(() -> new BadCredentialsException("Invalid credentials"));
-    if (!passwords.matches(request.password(), user.getPasswordHash())) {
+    User user = users.findByEmail(request.email().toLowerCase()).orElse(null);
+    String hash = user == null ? dummyHash : user.getPasswordHash();
+    boolean matches = passwords.matches(request.password(), hash);
+    if (user == null || !matches) {
       throw new BadCredentialsException("Invalid credentials");
     }
     return new AuthResponse(jwt.generateToken(user), user.getEmail(), user.getRole().name());

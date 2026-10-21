@@ -1,6 +1,7 @@
 package com.ticketpay;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -26,6 +27,7 @@ import com.ticketpay.payments.Payment;
 import com.ticketpay.payments.PaymentProvider;
 import com.ticketpay.payments.PaymentRepository;
 import com.ticketpay.payments.PaymentService;
+import com.ticketpay.payments.RefundService;
 import com.ticketpay.payments.dto.InitiatePaymentRequest;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
@@ -44,7 +46,9 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Import;
+import org.springframework.dao.DataAccessException;
 import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
@@ -63,9 +67,11 @@ class PaymentsTest extends BaseTest {
   @Autowired BookingRepository bookingRepo;
   @Autowired PaymentService paymentService;
   @Autowired PaymentRepository paymentRepo;
+  @Autowired RefundService refundService;
   @Autowired IdempotencyKeyRepository keyRepo;
   @Autowired MockPaymentProvider mock;
   @Autowired TestHoldTimes holdTimes;
+  @Autowired JdbcTemplate jdbc;
   @PersistenceContext EntityManager em;
 
   @BeforeEach
@@ -673,6 +679,67 @@ class PaymentsTest extends BaseTest {
     assertThat(removed).isGreaterThanOrEqualTo(1);
     assertThat(keyRepo.findById(settledKeyId)).isEmpty();
     assertThat(keyRepo.findById(pendingKeyId)).isPresent();
+  }
+
+  @Test
+  @Transactional
+  void expired_key_for_terminal_payment_is_purged_at_key_ttl_boundary() {
+    User user = newUser("payer");
+    UUID bookingId = bookOneSeat(user.getId());
+    paymentService.initiatePayment(user.getId(), bookingId, key());
+    Payment payment = paymentRepo.findByBookingId(bookingId).orElseThrow();
+    IdempotencyKey keyRow =
+        keyRepo.findAll().stream()
+            .filter(k -> payment.getId().equals(k.getPaymentId()))
+            .findFirst()
+            .orElseThrow();
+    em.flush();
+    em.clear();
+    // Only one hour past expiry: the retention window must not silently be 2x TTL.
+    holdTimes.backdateKeyExpiry(keyRow.getId(), Instant.now().minusSeconds(3600));
+
+    int removed = paymentService.purgeExpiredKeys();
+
+    assertThat(removed).isGreaterThanOrEqualTo(1);
+    assertThat(keyRepo.findById(keyRow.getId())).isEmpty();
+  }
+
+  @Test
+  void financial_history_blocks_payment_deletion() {
+    User user = newUser("payer");
+    UUID bookingId = bookOneSeat(user.getId());
+    paymentService.initiatePayment(user.getId(), bookingId, key());
+    UUID paymentId = paymentRepo.findByBookingId(bookingId).orElseThrow().getId();
+    User admin =
+        users.save(
+            new User(
+                "admin-" + UUID.randomUUID() + "@example.com",
+                passwords.encode("password123"),
+                Role.ADMIN));
+    try {
+      refundService.initiateRefund(admin.getId(), paymentId, "fk protection");
+
+      // Attempts are financial history too: the V8 RESTRICT constraint blocks deletion.
+      assertThatThrownBy(() -> jdbc.update("DELETE FROM payments WHERE id = ?", paymentId))
+          .isInstanceOf(DataAccessException.class);
+
+      // Even without attempts, refunds and reconciliation records still protect it.
+      jdbc.update("DELETE FROM payment_attempts WHERE payment_id = ?", paymentId);
+      assertThatThrownBy(() -> jdbc.update("DELETE FROM payments WHERE id = ?", paymentId))
+          .isInstanceOf(DataAccessException.class);
+      assertThat(
+              jdbc.queryForObject(
+                  "SELECT count(*) FROM refunds WHERE payment_id = ?", Long.class, paymentId))
+          .isEqualTo(1L);
+      assertThat(
+              jdbc.queryForObject(
+                  "SELECT count(*) FROM reconciliation_records WHERE payment_id = ?",
+                  Long.class,
+                  paymentId))
+          .isEqualTo(1L);
+    } finally {
+      holdTimes.releaseCommittedBooking(bookingId);
+    }
   }
 
   // ---- reads ----
