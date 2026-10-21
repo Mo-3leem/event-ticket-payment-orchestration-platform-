@@ -115,9 +115,9 @@ disabled.
 | GET | `/api/v1/events/{id}/seats` | public | seat inventory (no holder identity) |
 | POST | `/api/v1/holds` | user | acquire a seat hold |
 | DELETE | `/api/v1/holds/{eventSeatId}` | user | release own hold |
-| GET | `/api/v1/holds` | user | actionable holds |
+| GET | `/api/v1/holds/mine` | user | actionable holds |
 | POST | `/api/v1/bookings` | user | consume holds into a booking |
-| GET | `/api/v1/bookings` | user | own bookings |
+| GET | `/api/v1/bookings/me` | user | own bookings |
 | POST | `/api/v1/payments` | user | initiate payment (`Idempotency-Key` required) |
 | GET | `/api/v1/payments` | user | own payment history |
 | GET | `/api/v1/payments/{id}` | owner | payment details |
@@ -131,7 +131,7 @@ disabled.
 ## Database
 
 Flyway applies versioned migrations from `src/main/resources/db/migration`
-(`V1`…`V8`). Hibernate runs in `validate` mode and never alters the schema.
+(V1–V8). Hibernate runs in `validate` mode and never alters the schema.
 Applied migrations are immutable; schema corrections are added as new migrations
 (for example, `V8__protect_financial_history.sql` prevents cascade deletion of
 payment attempts, reconciliation records, and refunds).

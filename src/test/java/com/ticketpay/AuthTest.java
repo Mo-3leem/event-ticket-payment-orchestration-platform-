@@ -73,8 +73,11 @@ class AuthTest extends BaseTest {
   }
 
   @Test
-  void me_without_token_returns_403_or_401() throws Exception {
-    mvc.perform(get("/api/v1/auth/me")).andExpect(status().is4xxClientError());
+  void me_without_token_returns_401_json() throws Exception {
+    mvc.perform(get("/api/v1/auth/me"))
+        .andExpect(status().isUnauthorized())
+        .andExpect(jsonPath("$.code").value("UNAUTHORIZED"))
+        .andExpect(jsonPath("$.correlationId").exists());
   }
 
   @Test

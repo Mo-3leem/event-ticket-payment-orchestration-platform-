@@ -6,13 +6,9 @@ import org.springframework.test.context.ActiveProfiles;
 
 /**
  * Integration tests run against real PostgreSQL started via {@code docker compose up -d}
- * (see docker-compose.yml and src/test/resources/application.yml).
- *
- * <p>Testcontainers was evaluated first but is disabled for Day 1: the installed Docker
- * Desktop's Engine API proxy answers Testcontainers' version negotiation with HTTP 400,
- * so no container can be started from the test JVM. Compose-backed tests use the same
- * PostgreSQL engine, so row-locking and constraint behaviour under test is identical.
- * Revisit on Day 5 only if time remains.
+ * (see docker-compose.yml). The test profile (src/test/resources/application-test.yml)
+ * configures test-specific timing and logging settings; the datasource is inherited from
+ * application.yml and can be pointed at a dedicated test database with DATABASE_URL.
  */
 @SpringBootTest
 @AutoConfigureMockMvc

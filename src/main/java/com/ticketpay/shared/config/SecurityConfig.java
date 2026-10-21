@@ -1,6 +1,7 @@
 package com.ticketpay.shared.config;
 
 import com.ticketpay.identity.JwtAuthFilter;
+import com.ticketpay.shared.error.SecurityErrorHandler;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
@@ -17,10 +18,15 @@ public class SecurityConfig {
 
   private final JwtAuthFilter jwtAuthFilter;
   private final CorrelationIdFilter correlationIdFilter;
+  private final SecurityErrorHandler securityErrorHandler;
 
-  public SecurityConfig(JwtAuthFilter jwtAuthFilter, CorrelationIdFilter correlationIdFilter) {
+  public SecurityConfig(
+      JwtAuthFilter jwtAuthFilter,
+      CorrelationIdFilter correlationIdFilter,
+      SecurityErrorHandler securityErrorHandler) {
     this.jwtAuthFilter = jwtAuthFilter;
     this.correlationIdFilter = correlationIdFilter;
+    this.securityErrorHandler = securityErrorHandler;
   }
 
   @Bean
@@ -44,6 +50,10 @@ public class SecurityConfig {
                     .hasRole("ADMIN")
                     .anyRequest()
                     .authenticated())
+        .exceptionHandling(
+            ex ->
+                ex.authenticationEntryPoint(securityErrorHandler)
+                    .accessDeniedHandler(securityErrorHandler))
         .addFilterBefore(correlationIdFilter, UsernamePasswordAuthenticationFilter.class)
         .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class)
         .build();

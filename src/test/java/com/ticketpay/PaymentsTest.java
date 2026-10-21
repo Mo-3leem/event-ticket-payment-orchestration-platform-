@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -416,6 +417,54 @@ class PaymentsTest extends BaseTest {
 
   @Test
   @Transactional
+  void idempotency_key_of_exactly_64_characters_is_accepted() throws Exception {
+    String email = "payer-" + UUID.randomUUID() + "@example.com";
+    String token = tokenFor(email);
+    UUID userId = userIdOf(email);
+    UUID bookingId = bookOneSeat(userId);
+    String idemKey = "k".repeat(64);
+
+    mvc.perform(
+            post("/api/v1/payments")
+                .header("Authorization", "Bearer " + token)
+                .header("Idempotency-Key", idemKey)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(new InitiatePaymentRequest(bookingId))))
+        .andExpect(status().isCreated());
+
+    assertThat(keyRepo.findByUserIdAndKey(userId, idemKey)).isPresent();
+    assertThat(mock.getProcessedCount()).isEqualTo(1);
+  }
+
+  @Test
+  @Transactional
+  void idempotency_key_longer_than_64_characters_returns_400_without_persisting() throws Exception {
+    String email = "payer-" + UUID.randomUUID() + "@example.com";
+    String token = tokenFor(email);
+    UUID userId = userIdOf(email);
+    UUID bookingId = bookOneSeat(userId);
+    String idemKey = "k".repeat(65);
+    long keysBefore = keyRepo.count();
+    long paymentsBefore = paymentRepo.count();
+
+    mvc.perform(
+            post("/api/v1/payments")
+                .header("Authorization", "Bearer " + token)
+                .header("Idempotency-Key", idemKey)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(new InitiatePaymentRequest(bookingId))))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.code").value("BAD_REQUEST"))
+        .andExpect(jsonPath("$.message").value("Idempotency-Key must be at most 64 characters"));
+
+    assertThat(keyRepo.count()).isEqualTo(keysBefore);
+    assertThat(paymentRepo.count()).isEqualTo(paymentsBefore);
+    assertThat(keyRepo.findByUserIdAndKey(userId, idemKey)).isEmpty();
+    assertThat(mock.getProcessedCount()).isEqualTo(0);
+  }
+
+  @Test
+  @Transactional
   void foreign_booking_returns_404() throws Exception {
     String emailA = "a-" + UUID.randomUUID() + "@example.com";
     String emailB = "b-" + UUID.randomUUID() + "@example.com";
@@ -763,6 +812,9 @@ class PaymentsTest extends BaseTest {
     mvc.perform(get("/api/v1/payments/" + paymentId).header("Authorization", "Bearer " + tokenB))
         .andExpect(status().isNotFound());
 
-    mvc.perform(get("/api/v1/payments/" + paymentId)).andExpect(status().is4xxClientError());
+    mvc.perform(get("/api/v1/payments/" + paymentId))
+        .andExpect(status().isUnauthorized())
+        .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
+        .andExpect(jsonPath("$.code").value("UNAUTHORIZED"));
   }
 }

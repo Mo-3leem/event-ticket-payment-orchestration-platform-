@@ -52,6 +52,8 @@ public class PaymentService {
   /** Internal signal: concurrent key insert won; retry the whole begin step in a fresh transaction. */
   private static final class KeyWriteConflict extends RuntimeException {}
 
+  private static final int MAX_IDEMPOTENCY_KEY_LENGTH = 64;
+
   private BeginOutcome beginInFreshTransaction(UUID userId, UUID bookingId, String idemKey, String fingerprint) {
     try {
       return tx.execute(status -> beginAttempt(userId, bookingId, idemKey, fingerprint));
@@ -135,8 +137,13 @@ public class PaymentService {
     if (idemKey == null || idemKey.isBlank()) {
       throw new IllegalArgumentException("Idempotency-Key header is required");
     }
+    String key = idemKey.trim();
+    if (key.length() > MAX_IDEMPOTENCY_KEY_LENGTH) {
+      throw new IllegalArgumentException(
+          "Idempotency-Key must be at most " + MAX_IDEMPOTENCY_KEY_LENGTH + " characters");
+    }
     String fingerprint = fingerprint(bookingId);
-    BeginOutcome begin = beginInFreshTransaction(userId, bookingId, idemKey.trim(), fingerprint);
+    BeginOutcome begin = beginInFreshTransaction(userId, bookingId, key, fingerprint);
     return switch (begin) {
       case BeginOutcome.Replay(var response, var status) -> new CompletedPayment(response, status);
       case BeginOutcome.Lead(var payment, var keyId) -> {
@@ -372,8 +379,7 @@ public class PaymentService {
       return complete(key, 201, responseOf(payment));
     }
     // Truthful record, not a mislabeled failure: money was captured but the booking
-    // already expired. Seats stay released; void/refund handling belongs to a future
-    // reconciliation phase and is explicitly out of Day 3 scope.
+    // already expired. Seats stay released; the payment is flagged for Admin refund.
     payment.annotate("BOOKING_EXPIRED_AT_CONFIRM");
     return complete(key, 409, responseOf(payment));
   }
