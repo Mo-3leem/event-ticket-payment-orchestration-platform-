@@ -4,6 +4,7 @@ import com.ticketpay.identity.dto.AuthResponse;
 import com.ticketpay.identity.dto.LoginRequest;
 import com.ticketpay.identity.dto.RegisterRequest;
 import com.ticketpay.shared.error.ConflictException;
+import java.util.Locale;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -30,7 +31,7 @@ public class AuthService {
 
   @Transactional
   public AuthResponse register(RegisterRequest request) {
-    String email = request.email().toLowerCase();
+    String email = request.email().trim().toLowerCase(Locale.ROOT);
     if (users.existsByEmail(email)) {
       throw new ConflictException("Email already registered");
     }
@@ -41,7 +42,7 @@ public class AuthService {
 
   @Transactional(readOnly = true)
   public AuthResponse login(LoginRequest request) {
-    User user = users.findByEmail(request.email().toLowerCase()).orElse(null);
+    User user = users.findByEmail(request.email().trim().toLowerCase(Locale.ROOT)).orElse(null);
     String hash = user == null ? dummyHash : user.getPasswordHash();
     boolean matches = passwords.matches(request.password(), hash);
     if (user == null || !matches) {

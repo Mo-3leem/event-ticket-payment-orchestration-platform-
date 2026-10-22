@@ -19,16 +19,29 @@ public class CorrelationIdFilter extends OncePerRequestFilter {
   /** Client-supplied IDs are echoed into logs and error bodies; cap their size. */
   private static final int MAX_CORRELATION_ID_LENGTH = 100;
 
+  public static String resolveCorrelationId(
+      HttpServletRequest request, HttpServletResponse response) {
+    String correlationId = request.getHeader(HEADER);
+    if (!isValid(correlationId)) {
+      correlationId = response.getHeader(HEADER);
+    }
+    if (!isValid(correlationId)) {
+      correlationId = MDC.get(MDC_KEY);
+    }
+    return isValid(correlationId) ? correlationId : UUID.randomUUID().toString();
+  }
+
+  private static boolean isValid(String correlationId) {
+    return correlationId != null
+        && !correlationId.isBlank()
+        && correlationId.length() <= MAX_CORRELATION_ID_LENGTH;
+  }
+
   @Override
   protected void doFilterInternal(
       HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
       throws ServletException, IOException {
-    String correlationId = request.getHeader(HEADER);
-    if (correlationId == null
-        || correlationId.isBlank()
-        || correlationId.length() > MAX_CORRELATION_ID_LENGTH) {
-      correlationId = UUID.randomUUID().toString();
-    }
+    String correlationId = resolveCorrelationId(request, response);
     MDC.put(MDC_KEY, correlationId);
     response.setHeader(HEADER, correlationId);
     try {

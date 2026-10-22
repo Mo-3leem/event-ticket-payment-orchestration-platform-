@@ -7,6 +7,7 @@ import jakarta.persistence.Enumerated;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import java.time.Instant;
+import java.util.Locale;
 import java.util.UUID;
 
 @Entity
@@ -34,7 +35,7 @@ public class User {
 
   public User(String email, String passwordHash, Role role) {
     this.id = UUID.randomUUID();
-    this.email = email.toLowerCase();
+    this.email = email.trim().toLowerCase(Locale.ROOT);
     this.passwordHash = passwordHash;
     this.role = role;
     this.createdAt = Instant.now();

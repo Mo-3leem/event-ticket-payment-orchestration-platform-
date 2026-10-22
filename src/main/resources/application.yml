@@ -25,6 +25,10 @@ app:
   jwt:
     secret: ${JWT_SECRET:change-me-to-a-very-long-random-secret-for-dev-only-0123456789}
     expiration-minutes: 15
+  bootstrap:
+    admin:
+      email: ${APP_BOOTSTRAP_ADMIN_EMAIL:}
+      password: ${APP_BOOTSTRAP_ADMIN_PASSWORD:}
   hold:
     ttl-minutes: 10
   payment:

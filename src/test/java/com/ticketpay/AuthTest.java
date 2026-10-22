@@ -8,6 +8,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ticketpay.identity.dto.LoginRequest;
 import com.ticketpay.identity.dto.RegisterRequest;
+import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -33,7 +34,8 @@ class AuthTest extends BaseTest {
                 .content(objectMapper.writeValueAsString(new RegisterRequest(email, "password123"))))
         .andExpect(status().isCreated())
         .andExpect(jsonPath("$.token").exists())
-        .andExpect(jsonPath("$.email").value(email));
+        .andExpect(jsonPath("$.email").value(email))
+        .andExpect(jsonPath("$.role").value("USER"));
 
     mvc.perform(
             post("/api/v1/auth/login")
@@ -41,6 +43,18 @@ class AuthTest extends BaseTest {
                 .content(objectMapper.writeValueAsString(new LoginRequest(email, "password123"))))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.token").exists());
+  }
+
+  @Test
+  void public_registration_ignores_a_requested_admin_role() throws Exception {
+    String email = uniqueEmail();
+    String body =
+        objectMapper.writeValueAsString(
+            Map.of("email", email, "password", "password123", "role", "ADMIN"));
+
+    mvc.perform(post("/api/v1/auth/register").contentType(MediaType.APPLICATION_JSON).content(body))
+        .andExpect(status().isCreated())
+        .andExpect(jsonPath("$.role").value("USER"));
   }
 
   @Test
