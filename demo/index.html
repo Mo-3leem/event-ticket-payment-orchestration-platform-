@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="theme-color" content="#060908" />
+    <meta
+      name="description"
+      content="TicketPay interactive demo: seat holds, bookings, idempotent mock payments, reconciliation, and full refunds. Static simulation, no real payments."
+    />
+    <title>TicketPay · Orchestration demo</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&family=Playfair+Display:ital,wght@0,600;1,600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="./styles.css" />
+    <script type="module" src="./app.js"></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#app">Skip to content</a>
+
+    <header class="site-header">
+      <div class="shell header-inner">
+        <a class="brand" href="#/" aria-label="TicketPay demo home">
+          <span class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 32 32" fill="none">
+              <path
+                d="M7 9.5A1.5 1.5 0 0 1 8.5 8h15A1.5 1.5 0 0 1 25 9.5v3a4 4 0 0 0 0 8v3a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 7 23.5v-3a4 4 0 0 0 0-8v-3Z"
+                stroke="currentColor"
+                stroke-width="1.8"
+              />
+              <path d="M13.5 12.5v9M18.5 12.5v9" stroke="currentColor" stroke-width="1.4" stroke-dasharray="2.4 2.4" />
+            </svg>
+          </span>
+          <span class="brand-copy">
+            <span class="brand-name">TicketPay</span>
+            <span class="brand-sub">Orchestration demo</span>
+          </span>
+        </a>
+
+        <nav class="main-nav" aria-label="Primary navigation">
+          <a href="#/" data-nav="events">Events</a>
+          <a href="#/bookings" data-nav="bookings">
+            Bookings
+            <span class="nav-count" id="bookings-nav-count" hidden></span>
+          </a>
+          <a href="#/ops" data-nav="ops">
+            Payment ops
+            <span class="nav-count nav-count--alert" id="ops-nav-count" hidden></span>
+          </a>
+        </nav>
+
+        <div class="header-actions">
+          <span class="demo-pill">
+            <span class="demo-dot" aria-hidden="true"></span>
+            Simulated
+          </span>
+          <button class="btn btn--quiet btn--small" type="button" data-action="reset">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M4 4v6h6M20 20v-6h-6" />
+              <path d="M5.6 15a8 8 0 0 0 13.2 2M18.4 9A8 8 0 0 0 5.2 7" />
+            </svg>
+            Reset
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <main id="app" tabindex="-1"></main>
+
+    <footer class="site-footer">
+      <div class="shell footer-inner">
+        <div>
+          <span class="footer-brand">TicketPay</span>
+          <p>Interactive simulation of the Spring Boot ticketing backend.</p>
+        </div>
+        <div class="footer-meta">
+          <span>Static assets on Cloudflare</span>
+          <span aria-hidden="true">·</span>
+          <span>No real charges</span>
+          <span aria-hidden="true">·</span>
+          <button class="text-button" type="button" data-action="about">How it maps to the backend</button>
+        </div>
+      </div>
+    </footer>
+
+    <div class="toast-region" id="toast-region" aria-live="polite" aria-atomic="false"></div>
+
+    <dialog class="modal" id="modal" aria-labelledby="modal-title">
+      <div class="modal-card" id="modal-card"></div>
+    </dialog>
+
+    <noscript>
+      <div class="noscript">This demo needs JavaScript to simulate the booking and payment flows.</div>
+    </noscript>
+  </body>
+</html>
