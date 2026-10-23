@@ -114,9 +114,11 @@ public class BookingService {
   }
 
   /**
-   * Internal operation only — no public endpoint. The future payment module invokes this
-   * after a verified terminal success. Idempotent: confirming an already-CONFIRMED
-   * booking succeeds without changing state.
+   * Internal operation only — no public endpoint. The payment module invokes this
+   * after a verified terminal success. If the booking deadline has already passed,
+   * it expires and releases the seats instead of confirming them, returning an
+   * EXPIRED response so the caller can flag the captured payment for refund.
+   * Idempotent: confirming an already-CONFIRMED booking succeeds without changes.
    */
   @Transactional
   public BookingResponse confirmBooking(UUID bookingId) {
@@ -129,6 +131,10 @@ public class BookingService {
     }
     if (booking.getStatus() != BookingStatus.PENDING_PAYMENT) {
       throw new ConflictException("Booking cannot be confirmed");
+    }
+    if (!booking.getExpiresAt().isAfter(clock.instant())) {
+      expireLocked(booking);
+      return toResponse(booking, seatIdsOf(bookingId));
     }
 
     List<EventSeat> seats = lockedSeatsOf(bookingId);
@@ -158,20 +164,25 @@ public class BookingService {
     List<Booking> expired = bookings.findByStatusAndExpiresAtBefore(BookingStatus.PENDING_PAYMENT, now);
     int count = 0;
     for (Booking booking : expired) {
-      List<BookingItem> ownedItems = items.findByBookingId(booking.getId());
-      List<EventSeat> seats = lockSeats(ownedItems);
-      for (EventSeat seat : seats) {
-        if (seat.getStatus() == EventSeatStatus.HELD) {
-          seat.release();
-        }
-      }
-      for (BookingItem item : ownedItems) {
-        item.markReleased();
-      }
-      booking.expire();
+      expireLocked(booking);
       count++;
     }
     return count;
+  }
+
+  /** Caller already holds the booking row lock. Locks seats in deterministic order. */
+  private void expireLocked(Booking booking) {
+    List<BookingItem> ownedItems = items.findByBookingId(booking.getId());
+    List<EventSeat> seats = lockSeats(ownedItems);
+    for (EventSeat seat : seats) {
+      if (seat.getStatus() == EventSeatStatus.HELD) {
+        seat.release();
+      }
+    }
+    for (BookingItem item : ownedItems) {
+      item.markReleased();
+    }
+    booking.expire();
   }
 
   @Transactional(readOnly = true)

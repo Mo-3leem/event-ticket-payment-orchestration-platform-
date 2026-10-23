@@ -104,12 +104,12 @@ public class HoldService {
     seat.release();
   }
 
-  /** Actionable holds only: live HELD rows owned by the user. */
+  /** Actionable holds only: live HELD rows owned by the user and not yet booked. */
   @Transactional(readOnly = true)
   public Page<HoldResponse> myHolds(UUID userId, Pageable pageable) {
     return eventSeats
-        .findByHeldByUserIdAndStatusAndHoldExpiresAtAfterOrderByHoldExpiresAtAscIdAsc(
-            userId, EventSeatStatus.HELD, clock.instant(), pageable)
+        .findActionableHolds(
+            userId, EventSeatStatus.HELD, clock.instant(), BookingStatus.PENDING_PAYMENT, pageable)
         .map(
             seat ->
                 new HoldResponse(

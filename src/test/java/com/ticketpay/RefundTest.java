@@ -179,6 +179,8 @@ class RefundTest extends BaseTest {
     payment.authorize();
     payment.markUnknown();
     paymentRepo.saveAndFlush(payment);
+    // Reconciliation intentionally ignores fresh UNKNOWN rows; age this fixture.
+    holdTimes.backdatePaymentCreated(payment.getId(), Instant.now().minusSeconds(11 * 60));
     mock.rehearse(payment.getProviderRef(), PaymentProvider.ChargeResult.ok());
     holdTimes.expireBookingInPast(bookingId, Instant.now().minusSeconds(60));
     bookings.expireBookings();
@@ -332,6 +334,50 @@ class RefundTest extends BaseTest {
     // The single timed-out attempt recorded nothing; no further refund() call happened.
     assertThat(mock.getRefundProcessedCount()).isZero();
     assertThat(mock.hasRefundRecord(refund.providerRefundRef())).isFalse();
+  }
+
+  @Test
+  @Transactional
+  void empty_lookup_then_redrive_timeout_remains_unknown() {
+    String email = "payer-" + UUID.randomUUID() + "@example.com";
+    users.save(new User(email, passwords.encode("password123"), Role.USER));
+    UUID userId = userIdOf(email);
+    Payment payment = seedCapturedPayment(userId, "k-" + UUID.randomUUID());
+    mock.setSleepMs(700);
+    mock.setRefundBehavior(MockPaymentProvider.RefundBehavior.SLEEP_NO_RECORD);
+    UUID adminId = newUser("admin", Role.ADMIN).getId();
+
+    RefundResponse refund = refundService.initiateRefund(adminId, payment.getId(), "ambiguous");
+    assertThat(refund.status()).isEqualTo("UNKNOWN");
+
+    em.flush();
+    em.clear();
+    holdTimes.backdateRefundUpdated(refund.id(), Instant.now().minusSeconds(11 * 60));
+    // Provider still has no record, and the same-reference re-drive also times out.
+    assertThat(refundService.reconcileRefundBatch()).isGreaterThanOrEqualTo(1);
+
+    assertThat(refundRepo.findById(refund.id()).orElseThrow().getStatus())
+        .isEqualTo(RefundStatus.UNKNOWN);
+    assertThat(paymentRepo.findById(payment.getId()).orElseThrow().getStatus())
+        .isEqualTo(PaymentStatus.SUCCEEDED);
+    assertThat(mock.getRefundProcessedCount()).isZero();
+  }
+
+  @Test
+  @Transactional
+  void zero_value_payment_has_no_refundable_amount() {
+    User user = newUser("payer", Role.USER);
+    UUID bookingId = bookOneSeat(user.getId());
+    Payment payment = new Payment(bookingId, user.getId(), 0, "EGP");
+    payment.authorize();
+    payment.succeed();
+    paymentRepo.saveAndFlush(payment);
+    UUID adminId = newUser("admin", Role.ADMIN).getId();
+
+    assertThatThrownBy(() -> refundService.initiateRefund(adminId, payment.getId(), "zero"))
+        .isInstanceOf(com.ticketpay.shared.error.ConflictException.class)
+        .hasMessageContaining("no refundable amount");
+    assertThat(refundRepo.findByPaymentId(payment.getId())).isEmpty();
   }
 
   // ---- 4. lookup resolves ambiguous outcome with the SAME reference ----

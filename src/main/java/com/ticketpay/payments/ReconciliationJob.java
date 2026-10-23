@@ -27,7 +27,16 @@ public class ReconciliationJob {
 
   @Scheduled(fixedDelayString = "${app.reconciliation.interval-ms:300000}")
   public void reconcile() {
-    // Each cycle is isolated: a failing charge pass must never skip refund recovery.
+    // Crash-left AUTHORIZING rows are moved to UNKNOWN, then the normal lookup pass
+    // can resolve them. Isolated so one failed pass never skips the others.
+    try {
+      int recovered = reconciliation.recoverStaleAuthorizingBatch();
+      if (recovered > 0) {
+        log.info("Moved {} stale AUTHORIZING payments to UNKNOWN", recovered);
+      }
+    } catch (RuntimeException failure) {
+      log.error("Stale AUTHORIZING recovery cycle failed", failure);
+    }
     try {
       int resolved = reconciliation.reconcileBatch();
       if (resolved > 0) {

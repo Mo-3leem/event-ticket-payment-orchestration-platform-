@@ -71,6 +71,41 @@ class AuthTest extends BaseTest {
   }
 
   @Test
+  void registration_rejects_email_longer_than_storage_limit() throws Exception {
+    String email = "a".repeat(246) + "@example.com"; // 258 chars, over VARCHAR(255)
+    mvc.perform(
+            post("/api/v1/auth/register")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(new RegisterRequest(email, "password123"))))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+  }
+
+  @Test
+  void registration_rejects_password_over_bcrypt_limit() throws Exception {
+    mvc.perform(
+            post("/api/v1/auth/register")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    objectMapper.writeValueAsString(
+                        new RegisterRequest(uniqueEmail(), "p".repeat(73)))))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+  }
+
+  @Test
+  void registration_rejects_multibyte_password_over_utf8_byte_limit() throws Exception {
+    mvc.perform(
+            post("/api/v1/auth/register")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    objectMapper.writeValueAsString(
+                        new RegisterRequest(uniqueEmail(), "é".repeat(40)))))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.code").value("BAD_REQUEST"));
+  }
+
+  @Test
   void login_with_wrong_password_returns_401() throws Exception {
     String email = uniqueEmail();
     mvc.perform(

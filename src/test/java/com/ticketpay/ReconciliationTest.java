@@ -32,6 +32,8 @@ import com.ticketpay.payments.ReconciliationService;
 import com.ticketpay.payments.dto.ReviewNoteRequest;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -117,11 +119,43 @@ class ReconciliationTest extends BaseTest {
     return bookings.createBooking(userId, List.of(seat.getId())).bookingId();
   }
 
+  private static String fingerprintOf(UUID bookingId) {
+    try {
+      MessageDigest digest = MessageDigest.getInstance("SHA-256");
+      byte[] hash =
+          digest.digest(("POST|/api/v1/payments|" + bookingId).getBytes(StandardCharsets.UTF_8));
+      StringBuilder hex = new StringBuilder(hash.length * 2);
+      for (byte b : hash) {
+        hex.append(Character.forDigit((b >> 4) & 0xF, 16));
+        hex.append(Character.forDigit(b & 0xF, 16));
+      }
+      return hex.toString();
+    } catch (Exception e) {
+      throw new IllegalStateException(e);
+    }
+  }
+
   /** Committed UNKNOWN payment with aged timestamps, simulating a stuck operation. */
   private Payment seedAgedUnknown(UUID userId, UUID bookingId) {
     Payment payment = new Payment(bookingId, userId, 2500, "EGP");
     payment.authorize();
     payment.markUnknown();
+    paymentRepo.saveAndFlush(payment);
+    holdTimes.backdatePaymentCreated(payment.getId(), Instant.now().minusSeconds(11 * 60));
+    return paymentRepo.findById(payment.getId()).orElseThrow();
+  }
+
+  private Payment seedFreshUnknown(UUID userId, UUID bookingId) {
+    Payment payment = new Payment(bookingId, userId, 2500, "EGP");
+    payment.authorize();
+    payment.markUnknown();
+    paymentRepo.saveAndFlush(payment);
+    return paymentRepo.findById(payment.getId()).orElseThrow();
+  }
+
+  private Payment seedAgedAuthorizing(UUID userId, UUID bookingId) {
+    Payment payment = new Payment(bookingId, userId, 2500, "EGP");
+    payment.authorize();
     paymentRepo.saveAndFlush(payment);
     holdTimes.backdatePaymentCreated(payment.getId(), Instant.now().minusSeconds(11 * 60));
     return paymentRepo.findById(payment.getId()).orElseThrow();
@@ -208,6 +242,38 @@ class ReconciliationTest extends BaseTest {
 
     // Second cycle skips it (recently checked) without new records.
     assertThat(reconciliation.reconcileBatch()).isZero();
+  }
+
+  @Test
+  @Transactional
+  void fresh_unknown_is_not_reconciled_before_minimum_age() {
+    User user = newUser("payer", Role.USER);
+    UUID bookingId = bookOneSeat(user.getId());
+    Payment payment = seedFreshUnknown(user.getId(), bookingId);
+    mock.rehearse(payment.getProviderRef(), PaymentProvider.ChargeResult.ok());
+
+    assertThat(reconciliation.reconcileBatch()).isZero();
+    assertThat(paymentRepo.findById(payment.getId()).orElseThrow().getStatus())
+        .isEqualTo(PaymentStatus.UNKNOWN);
+  }
+
+  @Test
+  @Transactional
+  void stale_authorizing_is_recovered_to_unknown_then_resolved() {
+    User user = newUser("payer", Role.USER);
+    UUID bookingId = bookOneSeat(user.getId());
+    Payment payment = seedAgedAuthorizing(user.getId(), bookingId);
+    mock.rehearse(payment.getProviderRef(), PaymentProvider.ChargeResult.ok());
+
+    assertThat(reconciliation.recoverStaleAuthorizingBatch()).isGreaterThanOrEqualTo(1);
+    assertThat(paymentRepo.findById(payment.getId()).orElseThrow().getStatus())
+        .isEqualTo(PaymentStatus.UNKNOWN);
+
+    assertThat(reconciliation.reconcileBatch()).isGreaterThanOrEqualTo(1);
+    assertThat(paymentRepo.findById(payment.getId()).orElseThrow().getStatus())
+        .isEqualTo(PaymentStatus.SUCCEEDED);
+    assertThat(bookingRepo.findById(bookingId).orElseThrow().getStatus().name())
+        .isEqualTo("CONFIRMED");
   }
 
   @Test
@@ -314,7 +380,7 @@ class ReconciliationTest extends BaseTest {
     IdempotencyKey staleKey =
         keyRepo.saveAndFlush(
             new IdempotencyKey(
-                user.getId(), raceKey, "stale-fingerprint", Instant.now().plusSeconds(86400)));
+                user.getId(), raceKey, fingerprintOf(bookingId), Instant.now().plusSeconds(86400)));
     staleKey.linkPayment(payment.getId());
     keyRepo.saveAndFlush(staleKey);
     // No EntityManager flush needed here: this test runs without a surrounding

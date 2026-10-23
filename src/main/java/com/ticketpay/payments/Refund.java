@@ -136,8 +136,8 @@ public class Refund {
   }
 
   public void markUnknown(Instant now) {
-    if (status != RefundStatus.REQUESTED) {
-      throw new IllegalStateException("Only REQUESTED refunds can become UNKNOWN");
+    if (status != RefundStatus.REQUESTED && status != RefundStatus.UNKNOWN) {
+      throw new IllegalStateException("Only REQUESTED or UNKNOWN refunds can stay UNKNOWN");
     }
     this.status = RefundStatus.UNKNOWN;
     this.updatedAt = now;

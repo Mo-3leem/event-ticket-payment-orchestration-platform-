@@ -4,7 +4,9 @@ import com.ticketpay.identity.dto.AuthResponse;
 import com.ticketpay.identity.dto.LoginRequest;
 import com.ticketpay.identity.dto.RegisterRequest;
 import com.ticketpay.shared.error.ConflictException;
+import java.nio.charset.StandardCharsets;
 import java.util.Locale;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -32,11 +34,19 @@ public class AuthService {
   @Transactional
   public AuthResponse register(RegisterRequest request) {
     String email = request.email().trim().toLowerCase(Locale.ROOT);
+    if (request.password().getBytes(StandardCharsets.UTF_8).length > 72) {
+      throw new IllegalArgumentException("Password must be at most 72 UTF-8 bytes");
+    }
     if (users.existsByEmail(email)) {
       throw new ConflictException("Email already registered");
     }
     User user = new User(email, passwords.encode(request.password()), Role.USER);
-    users.save(user);
+    try {
+      users.saveAndFlush(user);
+    } catch (DataIntegrityViolationException duplicate) {
+      // The existence check is advisory; the unique index is the real arbiter.
+      throw new ConflictException("Email already registered");
+    }
     return new AuthResponse(jwt.generateToken(user), user.getEmail(), user.getRole().name());
   }
 

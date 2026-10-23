@@ -3,6 +3,7 @@ package com.ticketpay.payments;
 import com.ticketpay.payments.dto.RefundResponse;
 import com.ticketpay.shared.error.ConflictException;
 import com.ticketpay.shared.error.NotFoundException;
+import jakarta.annotation.PreDestroy;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.List;
@@ -89,6 +90,11 @@ public class RefundService {
             });
   }
 
+  @PreDestroy
+  void shutdown() {
+    providerCalls.shutdownNow();
+  }
+
   /** Durable snapshot taken under lock; used after Tx1 and for recovery. */
   private record RefundSnapshot(
       UUID refundId,
@@ -130,6 +136,9 @@ public class RefundService {
               throw new ConflictException(
                   "Only captured (SUCCEEDED) payments can be refunded; payment is "
                       + payment.getStatus());
+            }
+            if (payment.getAmountMinor() <= 0) {
+              throw new ConflictException("Payment has no refundable amount");
             }
             if (refunds.findByPaymentId(paymentId).isPresent()) {
               throw new ConflictException("Refund already exists for payment");
@@ -225,7 +234,7 @@ public class RefundService {
       future.cancel(true);
       return new PaymentService.ProviderCall(AttemptOutcome.TIMEOUT, providerTimeoutMs, "REFUND_TIMEOUT");
     } catch (InterruptedException interrupted) {
-      Thread.interrupted();
+      Thread.currentThread().interrupt();
       future.cancel(true);
       return new PaymentService.ProviderCall(
           AttemptOutcome.ERROR, clock.millis() - start, "INTERRUPTED");
@@ -237,6 +246,28 @@ public class RefundService {
       }
       return new PaymentService.ProviderCall(
           AttemptOutcome.ERROR, clock.millis() - start, cause.getClass().getSimpleName());
+    }
+  }
+
+  private Optional<PaymentProvider.ChargeResult> lookupRefundWithTimeout(String refundRef) {
+    Future<Optional<PaymentProvider.ChargeResult>> future =
+        providerCalls.submit(() -> provider.lookupRefund(refundRef));
+    try {
+      return future.get(providerTimeoutMs, TimeUnit.MILLISECONDS);
+    } catch (TimeoutException timeout) {
+      future.cancel(true);
+      throw new ProviderStatusUnknownException("Provider refund lookup timed out");
+    } catch (InterruptedException interrupted) {
+      Thread.currentThread().interrupt();
+      future.cancel(true);
+      throw new ProviderStatusUnknownException("Provider refund lookup interrupted");
+    } catch (java.util.concurrent.ExecutionException failure) {
+      Throwable cause = failure.getCause() == null ? failure : failure.getCause();
+      if (cause instanceof ProviderStatusUnknownException ambiguous) {
+        throw ambiguous;
+      }
+      throw new ProviderStatusUnknownException(
+          "Provider refund lookup failed: " + cause.getClass().getSimpleName());
     }
   }
 
@@ -307,7 +338,7 @@ public class RefundService {
     }
     Optional<PaymentProvider.ChargeResult> known;
     try {
-      known = provider.lookupRefund(snapshot.providerRefundRef());
+      known = lookupRefundWithTimeout(snapshot.providerRefundRef());
     } catch (ProviderStatusUnknownException ambiguous) {
       touchRefund(refundId);
       return false;

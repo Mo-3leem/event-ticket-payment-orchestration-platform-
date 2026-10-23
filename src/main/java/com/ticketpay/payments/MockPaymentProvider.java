@@ -47,6 +47,8 @@ public class MockPaymentProvider implements PaymentProvider {
   private volatile MockBehavior behavior = MockBehavior.SUCCESS;
   private volatile RefundBehavior refundBehavior = RefundBehavior.SUCCESS;
   private volatile long sleepMs = 0;
+  private volatile long lookupSleepMs = 0;
+  private volatile long refundLookupSleepMs = 0;
   private volatile boolean lookupThrows = false;
   private volatile boolean refundLookupThrows = false;
   private volatile CountDownLatch refundGate;
@@ -88,6 +90,7 @@ public class MockPaymentProvider implements PaymentProvider {
 
   @Override
   public Optional<ChargeResult> lookup(String providerReference) {
+    sleepFor(lookupSleepMs);
     if (lookupThrows) {
       throw new ProviderStatusUnknownException("Mock lookup is ambiguous by script");
     }
@@ -146,6 +149,7 @@ public class MockPaymentProvider implements PaymentProvider {
 
   @Override
   public Optional<ChargeResult> lookupRefund(String refundReference) {
+    sleepFor(refundLookupSleepMs);
     if (refundLookupThrows) {
       throw new ProviderStatusUnknownException("Mock refund lookup is ambiguous by script");
     }
@@ -165,8 +169,15 @@ public class MockPaymentProvider implements PaymentProvider {
   }
 
   private void sleep() {
+    sleepFor(sleepMs);
+  }
+
+  private void sleepFor(long millis) {
+    if (millis <= 0) {
+      return;
+    }
     try {
-      TimeUnit.MILLISECONDS.sleep(sleepMs);
+      TimeUnit.MILLISECONDS.sleep(millis);
     } catch (InterruptedException e) {
       Thread.currentThread().interrupt();
       throw new ProviderCallAbortedException("Mock call aborted while sleeping");
@@ -181,6 +192,14 @@ public class MockPaymentProvider implements PaymentProvider {
 
   public void setSleepMs(long sleepMs) {
     this.sleepMs = sleepMs;
+  }
+
+  public void setLookupSleepMs(long lookupSleepMs) {
+    this.lookupSleepMs = lookupSleepMs;
+  }
+
+  public void setRefundLookupSleepMs(long refundLookupSleepMs) {
+    this.refundLookupSleepMs = refundLookupSleepMs;
   }
 
   public void setLookupThrows(boolean lookupThrows) {
@@ -245,6 +264,8 @@ public class MockPaymentProvider implements PaymentProvider {
     behavior = MockBehavior.SUCCESS;
     refundBehavior = RefundBehavior.SUCCESS;
     sleepMs = 0;
+    lookupSleepMs = 0;
+    refundLookupSleepMs = 0;
     lookupThrows = false;
     refundLookupThrows = false;
     refundGate = null;

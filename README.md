@@ -23,9 +23,9 @@ real provider are documented in [docs/payment-lifecycle.md](docs/payment-lifecyc
   replay responses, fingerprint mismatch rejection (422), and stale-key recovery.
 - Explicit outcomes only: declines become `FAILED`, ambiguous provider results
   become `UNKNOWN` and are never auto-retried as failures.
-- Reconciliation of aged `UNKNOWN` payments via provider lookup, with an
-  append-only audit trail (`reconciliation_records`). Manual review notes never
-  move money.
+- Reconciliation of crash-left `AUTHORIZING` rows, aged `UNKNOWN` payments, and
+  in-flight refunds, with an append-only audit trail
+  (`reconciliation_records`). Manual review notes never move money.
 - Admin refunds: exactly one **full** refund per captured payment, executed only
   through `POST /api/v1/admin/payments/{id}/refund`. Refund recovery re-drives the
   same stable provider reference only when a lookup proves the provider has no
@@ -47,11 +47,13 @@ com.ticketpay
 ```
 
 Deep dives: [architecture](docs/architecture.md) ·
-[payment lifecycle](docs/payment-lifecycle.md) · [operations](docs/operations.md).
+[payment lifecycle](docs/payment-lifecycle.md) · [operations](docs/operations.md) ·
+[design decisions](docs/design-decisions.md) ·
+[interview and system-design guide](docs/interview-guide.md).
 
 ## Prerequisites
 
-- JDK 21 or newer (build verified with JDK 24).
+- JDK 25 (required; Spring Boot 3.5.16 supports Java 17-25; verified with JDK 25.0.2).
 - Maven 3.9+ (no wrapper is bundled).
 - Docker Desktop for PostgreSQL 16.
 
@@ -63,6 +65,10 @@ docker compose up -d
 
 The container listens on **host port 5433** (host 5432 is commonly occupied).
 The application defaults to `jdbc:postgresql://localhost:5433/ticketpay`.
+On first initialization, the Compose init script also creates empty
+`ticketpay_test` and `ticketpay_it` databases owned by `ticketpay`. Init scripts
+run only against a new data volume; `docker compose down -v` destroys all three
+databases and recreates them on the next start.
 
 ## Run the tests
 
@@ -117,6 +123,13 @@ The web-context gate test starts a real embedded servlet container without a
 datasource and exercises the registered filter chain, Spring Security, the two
 public endpoints, and `/actuator/health`.
 
+CI in [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs the full suite
+and the opt-in bootstrap integration test against a fresh PostgreSQL 17 service,
+then packages the application. It uses JDK 25 and system Maven (there is no
+wrapper). Database-backed tests require an isolated, disposable database; the
+Compose init script only creates empty databases and the suite itself does not
+reset or provision them.
+
 `AdminBootstrapPostgresIT` has been executed against PostgreSQL 17.5 and passed
 6/6 on a fresh, isolated database, including the advisory-lock timeout and
 rollback paths. Under the current single-`DataSource` `JpaTransactionManager`
@@ -151,10 +164,12 @@ It requires the same `TEST_DATABASE_*` variables and writes persistent rows. Use
 a dedicated, disposable database that satisfies the suite's fresh-database
 preconditions: no `ADMIN` and no data from an earlier run of this suite. The
 suite creates `ADMIN` and `USER` rows and does not remove them; rerunning against
-a database already modified by the suite may fail. No automatic cleanup, reset,
-or database provisioning is performed. The repository does not create, reset, or
-provision that database. Verify the target with `SELECT current_database()` before
-running; never point it at the shared `ticketpay` database or production.
+a database already modified by the suite may fail. The suite does not create,
+reset, or provision a database. Compose creates an empty `ticketpay_it` on first
+volume initialization, and CI creates a fresh one per job; local reruns require
+a new empty database or an explicit reset. Verify the target with
+`SELECT current_database()` before running; never point it at the shared
+`ticketpay` database or production.
 
 ## Run the application
 
@@ -246,6 +261,13 @@ disabled.
 > rehearse the migration/rollback and backup/restore strategy, and complete the
 > real-provider contract validation described in
 > [docs/payment-lifecycle.md](docs/payment-lifecycle.md).
+>
+> The pinned Spring Boot 3.5.16 graph retains two Spring WebMVC 6.2.19 advisories
+> (`CVE-2026-47890`, `CVE-2026-47884`) with no fixed 6.2.x release. Current code
+> search found no SSE or XSLT/view-rendering usage, but that is not proof of zero
+> reachability. Clearing them requires a Spring Framework 7 / Spring Boot 4
+> migration, which is outside the verified 3.5.x release. See
+> [docs/operations.md](docs/operations.md#known-dependency-advisories).
 
 ## API overview
 
@@ -278,7 +300,10 @@ Flyway applies versioned migrations from `src/main/resources/db/migration`
 (V1–V8). Hibernate runs in `validate` mode and never alters the schema.
 Applied migrations are immutable; schema corrections are added as new migrations
 (for example, `V8__protect_financial_history.sql` prevents cascade deletion of
-payment attempts, reconciliation records, and refunds).
+payment attempts, reconciliation records, and refunds). `baseline-on-migrate` is
+disabled, so startup fails on a non-empty schema without Flyway history instead
+of silently baselining it. Use a fresh database or an explicitly reviewed
+baseline procedure; do not enable automatic baselining for shared data.
 
 ## Deliberate limitations
 
@@ -290,7 +315,14 @@ payment attempts, reconciliation records, and refunds).
 - One full refund per payment, no partial refunds, no retry after a definitive
   refund decline.
 - Payments captured after their booking expired are flagged for Admin refund;
-  there is no automatic refund policy.
+  there is no automatic refund policy. Confirmation also checks the deadline
+  before marking seats sold, so a late provider response cannot reclaim a seat
+  even before the expiry sweeper runs.
+- Reconciliation includes crash-left `AUTHORIZING` rows older than the configured
+  minimum age and waits for fresh `UNKNOWN` rows to age before lookup. Provider
+  lookup timeouts are ambiguous and never trigger a re-charge or refund re-drive.
+- All refunds are full-amount; a captured payment with zero refundable amount is
+  rejected instead of invoking the provider.
 - Multi-instance deployments duplicate reconciliation work (safety is preserved by
   row locks); cross-instance leader fencing is out of scope.
 - No CORS configuration; this is a same-origin/backend API.

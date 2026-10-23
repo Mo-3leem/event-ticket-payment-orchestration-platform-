@@ -340,6 +340,30 @@ class BookingTest extends BaseTest {
 
   @Test
   @Transactional
+  void confirm_after_deadline_expires_and_releases_instead_of_selling() {
+    User user = newUser("buyer");
+    EventSeat seat = firstAvailableSeat();
+    holds.acquire(seat.getId(), user.getId());
+    UUID bookingId = bookings.createBooking(user.getId(), List.of(seat.getId())).bookingId();
+    em.flush();
+    em.clear();
+    holdTimes.expireBookingInPast(bookingId, Instant.now().minusSeconds(60));
+
+    var response = bookings.confirmBooking(bookingId);
+
+    assertThat(response.status()).isEqualTo("EXPIRED");
+    assertThat(bookingRepo.findById(bookingId).orElseThrow().getStatus().name())
+        .isEqualTo("EXPIRED");
+    assertThat(eventSeats.findById(seat.getId()).orElseThrow().getStatus())
+        .isEqualTo(EventSeatStatus.AVAILABLE);
+    assertThat(
+            bookingItems.findByBookingId(bookingId).stream()
+                .allMatch(com.ticketpay.booking.BookingItem::isReleased))
+        .isTrue();
+  }
+
+  @Test
+  @Transactional
   void expiry_releases_seats_and_expires_booking() {
     User user = newUser("buyer");
     List<EventSeat> seats = availableSeatsOfSameEvent(2);
@@ -410,7 +434,8 @@ class BookingTest extends BaseTest {
 
     mvc.perform(get("/api/v1/holds/mine").header("Authorization", "Bearer " + tokenA))
         .andExpect(status().isOk())
-        .andExpect(jsonPath("$.content.length()").value(2));
+        // One hold was consumed by the booking; only the actionable hold remains.
+        .andExpect(jsonPath("$.content.length()").value(1));
     mvc.perform(get("/api/v1/holds/mine").header("Authorization", "Bearer " + tokenB))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.content.length()").value(0));

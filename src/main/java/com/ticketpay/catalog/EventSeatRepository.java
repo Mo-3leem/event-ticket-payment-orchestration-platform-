@@ -20,8 +20,18 @@ public interface EventSeatRepository extends JpaRepository<EventSeat, UUID> {
 
   List<EventSeat> findByEventIdOrderBySeatSeatCodeAsc(UUID eventId);
 
-  Page<EventSeat> findByHeldByUserIdAndStatusAndHoldExpiresAtAfterOrderByHoldExpiresAtAscIdAsc(
-      UUID heldByUserId, EventSeatStatus status, Instant now, Pageable pageable);
+  @Query(
+      "select es from EventSeat es where es.heldByUserId = :userId"
+          + " and es.status = :status and es.holdExpiresAt > :now"
+          + " and es.id not in (select bi.eventSeat.id from BookingItem bi"
+          + " where bi.booking.status = :bookedStatus)"
+          + " order by es.holdExpiresAt asc, es.id asc")
+  Page<EventSeat> findActionableHolds(
+      UUID userId,
+      EventSeatStatus status,
+      Instant now,
+      BookingStatus bookedStatus,
+      Pageable pageable);
 
   /**
    * Releasable holds only: expired HELD rows NOT consumed by a live booking.

@@ -18,7 +18,10 @@ mvn clean test
 
 The test guard rejects missing variables and the shared `ticketpay` database,
 including URL-equivalent and percent-encoded forms, before opening a connection.
-The repository does not create, reset, or provision the test database.
+Compose creates empty `ticketpay_test` and `ticketpay_it` databases on first
+volume initialization. The test suite does not create, reset, or provision them;
+`docker compose down -v` is the destructive reset path. CI provisions a fresh
+PostgreSQL 17 service per workflow run.
 Database-free tests need no database URL:
 `mvn '-Dtest=AdminBootstrapTest,AdminBootstrapGateTest,AdminBootstrapGateWebTest,TestDatabaseTest,TestDatasourceGuardInitializerTest' test`.
 
@@ -43,14 +46,16 @@ from an earlier run of this suite. Set `TEST_DATABASE_URL`,
 `TEST_DATABASE_USER`, and `TEST_DATABASE_PASSWORD` as above and verify the target
 with `SELECT current_database()`. The suite writes persistent `ADMIN` and `USER`
 rows and does not remove them; rerunning against a database already modified by
-the suite may fail. No automatic cleanup, reset, or database provisioning is
-performed. Last verified on 2026-10-22 against a temporary, isolated PostgreSQL
-17.5 instance bound to `127.0.0.1:55432`: the full `mvn test` suite passed 165/165
-tests (15 Surefire classes; 10 database-backed and 5 database-free), and the
-opt-in `AdminBootstrapPostgresIT` class passed 6/6 on a separate fresh database.
-These results cover the tested PostgreSQL configuration, including advisory-lock
-timeout and rollback behavior; they do not prove production concurrency outside
-that configuration.
+the suite may fail. The suite does not create, reset, or provision the database.
+Compose creates an empty `ticketpay_it` on first volume initialization, and CI
+creates a fresh one per workflow run; local reruns require a new empty database
+or an explicit reset. Last verified on 2026-10-23 against a temporary, isolated
+PostgreSQL 17.5 instance bound to `127.0.0.1:55440`: the full `mvn test` suite
+passed 180/180 tests (15 Surefire classes; 10 database-backed and 5
+database-free), and the opt-in `AdminBootstrapPostgresIT` class passed 6/6 on a
+separate fresh database. These results cover the tested PostgreSQL
+configuration, including advisory-lock timeout and rollback behavior; they do
+not prove production concurrency outside that configuration.
 
 Health: `GET /actuator/health` (status only). Swagger UI: `/swagger-ui.html`.
 
@@ -91,6 +96,11 @@ Scheduling knobs (`application.yml`):
 | `app.refund.batch-size` | 50 | refunds per pass |
 | `app.payment.provider-timeout-ms` | 5000 | charge timeout |
 | `app.refund.provider-timeout-ms` | 5000 | refund timeout |
+| `spring.task.scheduling.pool.size` | 4 | scheduler threads; keeps hold expiry, reconciliation, and cleanup from starving each other |
+
+Charge and refund provider lookups share their respective timeout budgets.
+Timeouts are ambiguous outcomes: the payment/refund stays unresolved and is never
+re-driven as if the provider had no record.
 
 ## First administrator provisioning
 
@@ -182,6 +192,9 @@ Flyway applies `V1`…`V8` at startup. Applied migrations are immutable; correct
 ship as new migrations. `V8` protects financial history by changing payment
 foreign keys from `CASCADE` to `RESTRICT`: deleting a payment that has attempts,
 reconciliation records, or refunds now fails instead of silently deleting history.
+`spring.flyway.baseline-on-migrate` is `false`. A non-empty schema without Flyway
+history fails startup instead of being silently baselined; use a fresh database
+or an explicitly reviewed baseline procedure for a legacy schema.
 
 Before running the integration suite, set `TEST_DATABASE_URL`,
 `TEST_DATABASE_USER`, and `TEST_DATABASE_PASSWORD` to a dedicated test database.
@@ -190,6 +203,31 @@ rejects missing credentials and shared-database URL forms before connecting and
 pins the datasource and Flyway aliases to the validated values. The
 suite releases the seats and bookings it commits, but leaves test user accounts
 behind; never point tests at a database whose data must be preserved.
+
+## CI
+
+[`.github/workflows/ci.yml`](../.github/workflows/ci.yml) runs on pushes to
+`main`, pull requests, and manual dispatch. It uses Temurin JDK 25, starts a
+PostgreSQL 17 service, runs `mvn -B -ntp clean test` against `ticketpay_test`,
+creates a fresh `ticketpay_it`, runs `AdminBootstrapPostgresIT`, packages the
+application, and uploads the jar. No Maven wrapper is bundled. CI depends on
+network access to Maven Central and the PostgreSQL image; it does not deploy.
+
+## Known dependency advisories
+
+An OSV query-batch scan of the 122 resolved test-scope Maven artifacts on
+2026-10-23 found only these two advisories. The verified Spring Boot 3.5.16 graph
+retains `org.springframework:spring-webmvc:6.2.19` with:
+
+- `GHSA-j9f9-w8pj-32f8` / `CVE-2026-47890` — SSE / view-fragment stream corruption.
+- `GHSA-pc63-qcmh-9cmg` / `CVE-2026-47884` — `XsltView` SSRF / RCE.
+
+No fixed Spring Framework 6.2.x release exists at the time of the last scan.
+Code search found no SSE, `XsltView`, `ViewResolver`, or broad view-rendering
+usage, but this is not proof that the advisories are unreachable. Treat the
+application as not production-ready until a Spring Framework 7 / Spring Boot 4
+migration is evaluated and verified, or a vendor-supported 6.2.x fix becomes
+available. Re-run OSV or an equivalent scanner before each release.
 
 ## Observability
 
@@ -210,6 +248,13 @@ behind; never point tests at a database whose data must be preserved.
 2. Confirm `payments.last_reconciled_at` is advancing (the reconciler touched it).
 3. If lookups are ambiguous, wait for the provider; never force a new charge.
 4. If a booking was confirmed later, verify `booking_items` and `event_seats`.
+
+**Crash-left `AUTHORIZING` payment**
+
+1. The reconciliation job moves aged `AUTHORIZING` rows to `UNKNOWN` under a row
+   lock before the normal lookup pass.
+2. Verify `last_reconciled_at` advances on the following pass.
+3. Do not manually re-drive a charge; resolve only by provider lookup.
 
 **Refund stuck `REQUESTED`/`UNKNOWN`**
 

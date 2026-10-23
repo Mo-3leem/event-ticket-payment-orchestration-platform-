@@ -28,6 +28,7 @@ import com.ticketpay.payments.Payment;
 import com.ticketpay.payments.PaymentProvider;
 import com.ticketpay.payments.PaymentRepository;
 import com.ticketpay.payments.PaymentService;
+import com.ticketpay.payments.PaymentStatus;
 import com.ticketpay.payments.RefundService;
 import com.ticketpay.payments.dto.InitiatePaymentRequest;
 import jakarta.persistence.EntityManager;
@@ -400,6 +401,160 @@ class PaymentsTest extends BaseTest {
 
   @Test
   @Transactional
+  void stale_key_with_different_fingerprint_returns_422_before_reclaim() {
+    User user = newUser("payer");
+    UUID bookingA = bookOneSeat(user.getId());
+    UUID bookingB = bookOneSeat(user.getId());
+    Payment payment = seedAuthorizing(user.getId(), bookingA);
+    IdempotencyKey seeded =
+        seedKey(user.getId(), key(), bookingA, payment.getId());
+    em.flush();
+    em.clear();
+    holdTimes.backdateKeyCreated(seeded.getId(), Instant.now().minusSeconds(300));
+
+    assertThatThrownBy(
+            () -> paymentService.initiatePayment(user.getId(), bookingB, seeded.getKey()))
+        .isInstanceOf(com.ticketpay.shared.error.UnprocessableException.class);
+
+    assertThat(mock.getProcessedCount()).isZero();
+    assertThat(paymentRepo.findById(payment.getId()).orElseThrow().getStatus())
+        .isEqualTo(com.ticketpay.payments.PaymentStatus.AUTHORIZING);
+  }
+
+  @Test
+  @Transactional
+  void stale_key_over_unknown_recovers_with_lookup_instead_of_replaying() {
+    User user = newUser("payer");
+    UUID bookingId = bookOneSeat(user.getId());
+    Payment payment = seedAuthorizing(user.getId(), bookingId);
+    payment.markUnknown();
+    paymentRepo.saveAndFlush(payment);
+    mock.rehearse(payment.getProviderRef(), PaymentProvider.ChargeResult.ok());
+    IdempotencyKey seeded =
+        seedKey(user.getId(), key(), bookingId, payment.getId());
+    em.flush();
+    em.clear();
+    holdTimes.backdateKeyCreated(seeded.getId(), Instant.now().minusSeconds(300));
+
+    var result = paymentService.initiatePayment(user.getId(), bookingId, seeded.getKey());
+
+    assertThat(result.httpStatus()).isEqualTo(201);
+    assertThat(result.body().status()).isEqualTo("SUCCEEDED");
+    // Recovery used lookup only; it must not charge the stable reference again.
+    assertThat(mock.getProcessedCount()).isZero();
+    assertThat(bookingRepo.findById(bookingId).orElseThrow().getStatus().name())
+        .isEqualTo("CONFIRMED");
+  }
+
+  @Test
+  @Transactional
+  void lost_response_is_recovered_by_lookup_without_charging_again() throws Exception {
+    mock.setBehavior(MockPaymentProvider.MockBehavior.RECORD_THEN_SLEEP);
+    mock.setSleepMs(800);
+    String email = "payer-" + UUID.randomUUID() + "@example.com";
+    String token = tokenFor(email);
+    UUID userId = userIdOf(email);
+    UUID bookingId = bookOneSeat(userId);
+    String idemKey = key();
+    String body = objectMapper.writeValueAsString(new InitiatePaymentRequest(bookingId));
+
+    mvc.perform(
+            post("/api/v1/payments")
+                .header("Authorization", "Bearer " + token)
+                .header("Idempotency-Key", idemKey)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(body))
+        .andExpect(status().isAccepted())
+        .andExpect(jsonPath("$.status").value("UNKNOWN"));
+
+    Payment payment = paymentRepo.findByBookingId(bookingId).orElseThrow();
+    assertThat(mock.hasRecord(payment.getProviderRef())).isTrue();
+    assertThat(mock.getProcessedCount()).isEqualTo(1);
+    IdempotencyKey key = keyRepo.findByUserIdAndKey(userId, idemKey).orElseThrow();
+    holdTimes.backdateKeyCreated(key.getId(), Instant.now().minusSeconds(300));
+    em.flush();
+    em.clear();
+
+    var recovered = paymentService.initiatePayment(userId, bookingId, idemKey);
+
+    assertThat(recovered.httpStatus()).isEqualTo(201);
+    assertThat(recovered.body().status()).isEqualTo("SUCCEEDED");
+    assertThat(mock.getProcessedCount()).isEqualTo(1);
+    assertThat(bookingRepo.findById(bookingId).orElseThrow().getStatus().name())
+        .isEqualTo("CONFIRMED");
+  }
+
+  @Test
+  @Transactional
+  void stale_completed_unknown_key_recovers_instead_of_replaying_unknown() {
+    User user = newUser("payer");
+    UUID bookingId = bookOneSeat(user.getId());
+    Payment payment = seedAuthorizing(user.getId(), bookingId);
+    payment.markUnknown();
+    paymentRepo.saveAndFlush(payment);
+    mock.rehearse(payment.getProviderRef(), PaymentProvider.ChargeResult.ok());
+    IdempotencyKey seeded =
+        seedKey(user.getId(), key(), bookingId, payment.getId());
+    seeded.complete(202, "{}");
+    keyRepo.saveAndFlush(seeded);
+    em.flush();
+    em.clear();
+    holdTimes.backdateKeyCreated(seeded.getId(), Instant.now().minusSeconds(300));
+
+    var result = paymentService.initiatePayment(user.getId(), bookingId, seeded.getKey());
+
+    assertThat(result.httpStatus()).isEqualTo(201);
+    assertThat(result.body().status()).isEqualTo("SUCCEEDED");
+    assertThat(mock.getProcessedCount()).isZero();
+    assertThat(bookingRepo.findById(bookingId).orElseThrow().getStatus().name())
+        .isEqualTo("CONFIRMED");
+  }
+
+  @Test
+  @Transactional
+  void expired_completed_unknown_key_blocks_instead_of_replaying_or_charging() {
+    User user = newUser("payer");
+    UUID bookingId = bookOneSeat(user.getId());
+    Payment payment = seedAuthorizing(user.getId(), bookingId);
+    payment.markUnknown();
+    paymentRepo.saveAndFlush(payment);
+    IdempotencyKey seeded =
+        seedKey(user.getId(), key(), bookingId, payment.getId());
+    seeded.complete(202, "{}");
+    keyRepo.saveAndFlush(seeded);
+    em.flush();
+    em.clear();
+    holdTimes.backdateKeyCreated(seeded.getId(), Instant.now().minusSeconds(300));
+    holdTimes.backdateKeyExpiry(seeded.getId(), Instant.now().minusSeconds(60));
+
+    assertThatThrownBy(
+            () -> paymentService.initiatePayment(user.getId(), bookingId, seeded.getKey()))
+        .isInstanceOf(com.ticketpay.shared.error.ConflictException.class);
+    assertThat(mock.getProcessedCount()).isZero();
+  }
+
+  @Test
+  @Transactional
+  void lookup_timeout_stays_unknown_and_never_authorizes_again() {
+    User user = newUser("payer");
+    UUID bookingId = bookOneSeat(user.getId());
+    Payment payment = seedAuthorizing(user.getId(), bookingId);
+    IdempotencyKey seeded =
+        seedKey(user.getId(), key(), bookingId, payment.getId());
+    em.flush();
+    em.clear();
+    holdTimes.backdateKeyCreated(seeded.getId(), Instant.now().minusSeconds(300));
+    mock.setLookupSleepMs(10_000);
+
+    var result = paymentService.initiatePayment(user.getId(), bookingId, seeded.getKey());
+
+    assertThat(result.httpStatus()).isEqualTo(202);
+    assertThat(result.body().status()).isEqualTo("UNKNOWN");
+    assertThat(mock.getProcessedCount()).isZero();
+  }
+
+  @Test
+  @Transactional
   void missing_key_returns_400() throws Exception {
     String email = "payer-" + UUID.randomUUID() + "@example.com";
     String token = tokenFor(email);
@@ -652,6 +807,36 @@ class PaymentsTest extends BaseTest {
     Payment stored = paymentRepo.findById(payment.getId()).orElseThrow();
     assertThat(stored.getStatus().name()).isEqualTo("SUCCEEDED");
     assertThat(stored.getNote()).isNotBlank();
+    assertThat(bookingRepo.findById(bookingId).orElseThrow().getStatus().name())
+        .isEqualTo("EXPIRED");
+    assertThat(eventSeats.findById(seat.getId()).orElseThrow().getStatus())
+        .isEqualTo(EventSeatStatus.AVAILABLE);
+  }
+
+  @Test
+  @Transactional
+  void success_after_deadline_but_before_sweeper_expires_instead_of_confirming() {
+    User user = newUser("payer");
+    EventSeat seat = firstAvailableSeat();
+    holds.acquire(seat.getId(), user.getId());
+    UUID bookingId = bookings.createBooking(user.getId(), List.of(seat.getId())).bookingId();
+    Payment payment = seedAuthorizing(user.getId(), bookingId);
+    IdempotencyKey seeded =
+        seedKey(user.getId(), key(), bookingId, payment.getId());
+    em.flush();
+    em.clear();
+    holdTimes.expireBookingInPast(bookingId, Instant.now().minusSeconds(60));
+
+    var result =
+        paymentService.finishAttempt(
+            payment.getId(),
+            seeded.getId(),
+            new PaymentService.ProviderCall(AttemptOutcome.SUCCESS, 10, null));
+
+    assertThat(result.httpStatus()).isEqualTo(409);
+    Payment stored = paymentRepo.findById(payment.getId()).orElseThrow();
+    assertThat(stored.getStatus()).isEqualTo(PaymentStatus.SUCCEEDED);
+    assertThat(stored.getNote()).isEqualTo("BOOKING_EXPIRED_AT_CONFIRM");
     assertThat(bookingRepo.findById(bookingId).orElseThrow().getStatus().name())
         .isEqualTo("EXPIRED");
     assertThat(eventSeats.findById(seat.getId()).orElseThrow().getStatus())

@@ -20,10 +20,21 @@ public class HoldExpiryJob {
 
   @Scheduled(fixedDelayString = "${app.hold.expiry-check-ms:60000}")
   public void expire() {
-    int releasedHolds = holds.releaseExpired();
-    int expiredBookings = bookings.expireBookings();
-    if (releasedHolds > 0 || expiredBookings > 0) {
-      log.info("Released {} expired holds, expired {} bookings", releasedHolds, expiredBookings);
+    try {
+      int releasedHolds = holds.releaseExpired();
+      if (releasedHolds > 0) {
+        log.info("Released {} expired holds", releasedHolds);
+      }
+    } catch (RuntimeException failure) {
+      log.error("Hold expiry cycle failed", failure);
+    }
+    try {
+      int expiredBookings = bookings.expireBookings();
+      if (expiredBookings > 0) {
+        log.info("Expired {} unpaid bookings", expiredBookings);
+      }
+    } catch (RuntimeException failure) {
+      log.error("Booking expiry cycle failed", failure);
     }
   }
 }

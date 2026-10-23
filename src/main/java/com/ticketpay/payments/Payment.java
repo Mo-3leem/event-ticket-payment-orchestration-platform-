@@ -100,6 +100,10 @@ public class Payment {
     return note;
   }
 
+  public Instant getCreatedAt() {
+    return createdAt;
+  }
+
   public Instant getLastReconciledAt() {
     return lastReconciledAt;
   }
@@ -140,8 +144,10 @@ public class Payment {
   }
 
   public void markUnknown() {
-    if (status != PaymentStatus.AUTHORIZING && status != PaymentStatus.CREATED) {
-      throw new IllegalStateException("Only AUTHORIZING payments can become UNKNOWN");
+    if (status != PaymentStatus.AUTHORIZING
+        && status != PaymentStatus.CREATED
+        && status != PaymentStatus.UNKNOWN) {
+      throw new IllegalStateException("Only AUTHORIZING, CREATED, or UNKNOWN payments can stay UNKNOWN");
     }
     this.status = PaymentStatus.UNKNOWN;
     this.updatedAt = Instant.now();
@@ -164,14 +170,16 @@ public class Payment {
     this.updatedAt = Instant.now();
   }
 
+  /** Settled states only. UNKNOWN is intentionally recoverable, not terminal. */
   public boolean isTerminal() {
     return status == PaymentStatus.SUCCEEDED
         || status == PaymentStatus.FAILED
-        || status == PaymentStatus.UNKNOWN
         || status == PaymentStatus.REFUNDED;
   }
 
   public boolean isUnresolved() {
-    return status == PaymentStatus.CREATED || status == PaymentStatus.AUTHORIZING;
+    return status == PaymentStatus.CREATED
+        || status == PaymentStatus.AUTHORIZING
+        || status == PaymentStatus.UNKNOWN;
   }
 }

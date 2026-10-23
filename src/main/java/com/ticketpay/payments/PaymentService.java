@@ -6,6 +6,7 @@ import com.ticketpay.booking.Booking;
 import com.ticketpay.booking.BookingRepository;
 import com.ticketpay.booking.BookingService;
 import com.ticketpay.booking.BookingStatus;
+import com.ticketpay.booking.dto.BookingResponse;
 import com.ticketpay.payments.dto.PaymentResponse;
 import com.ticketpay.shared.error.ConflictException;
 import com.ticketpay.shared.error.NotFoundException;
@@ -228,11 +229,34 @@ public class PaymentService {
   private BeginOutcome beginAttempt(UUID userId, UUID bookingId, String idemKey, String fingerprint) {
     KeyAcquisition acquired = acquireKey(userId, idemKey, fingerprint);
     IdempotencyKey keyRow = acquired.row();
+    // Bind every replay/reclaim branch to the original request. Without this,
+    // a stale IN_PROGRESS key could act on a different booking after a crash.
+    if (!keyRow.getRequestHash().equals(fingerprint)) {
+      throw new UnprocessableException("Idempotency key already used for a different request");
+    }
     if (keyRow.getStatus() == KeyStatus.COMPLETED) {
-      if (!keyRow.getRequestHash().equals(fingerprint)) {
-        throw new UnprocessableException("Idempotency key already used for a different request");
+      if (!isStale(keyRow)) {
+        return new BeginOutcome.Replay(readBody(keyRow), keyRow.getResponseCode());
       }
-      return new BeginOutcome.Replay(readBody(keyRow), keyRow.getResponseCode());
+      Payment prior =
+          keyRow.getPaymentId() == null
+              ? null
+              : payments.findById(keyRow.getPaymentId()).orElse(null);
+      if (prior == null) {
+        return new BeginOutcome.Replay(readBody(keyRow), keyRow.getResponseCode());
+      }
+      if (prior.isTerminal()) {
+        // The operation resolved after this key stored a 202/UNKNOWN response.
+        // Return current state instead of a permanently stale replay.
+        PaymentResponse body = responseOf(prior);
+        keyRow.complete(200, writeBody(body));
+        return new BeginOutcome.Replay(body, 200);
+      }
+      if (isExpired(keyRow)) {
+        // A stale key over an unresolved payment must never replay or authorize a charge.
+        throw new ConflictException("Payment already in progress");
+      }
+      return new BeginOutcome.Reclaim(prior.getId(), keyRow.getId());
     }
     if (acquired.createdByMe()) {
       // This request won the insert: proceed as leader.
@@ -332,6 +356,31 @@ public class PaymentService {
     }
   }
 
+  /**
+   * Lookups are external calls too. A provider that hangs must not pin an HTTP
+   * request or the shared scheduler thread; timeout is treated as indeterminate.
+   */
+  private Optional<PaymentProvider.ChargeResult> lookupWithTimeout(String providerRef) {
+    Future<Optional<PaymentProvider.ChargeResult>> future =
+        providerCalls.submit(() -> provider.lookup(providerRef));
+    try {
+      return future.get(providerTimeoutMs, TimeUnit.MILLISECONDS);
+    } catch (TimeoutException timeout) {
+      future.cancel(true);
+      throw new ProviderStatusUnknownException("Provider lookup timed out");
+    } catch (InterruptedException interrupted) {
+      Thread.currentThread().interrupt();
+      future.cancel(true);
+      throw new ProviderStatusUnknownException("Provider lookup interrupted");
+    } catch (ExecutionException failure) {
+      Throwable cause = failure.getCause() == null ? failure : failure.getCause();
+      if (cause instanceof ProviderStatusUnknownException ambiguous) {
+        throw ambiguous;
+      }
+      throw new ProviderStatusUnknownException("Provider lookup failed: " + cause.getClass().getSimpleName());
+    }
+  }
+
   // ---- recovery (no transaction for the lookup itself) ----
 
   private CompletedPayment reclaim(UUID paymentId, UUID keyId) {
@@ -341,7 +390,7 @@ public class PaymentService {
     }
     Optional<PaymentProvider.ChargeResult> known;
     try {
-      known = provider.lookup(payment.getProviderRef());
+      known = lookupWithTimeout(payment.getProviderRef());
     } catch (ProviderStatusUnknownException ambiguous) {
       return tx.execute(
           status -> finishAttempt(paymentId, keyId, new ProviderCall(AttemptOutcome.ERROR, 0, "AMBIGUOUS_LOOKUP")));
@@ -375,8 +424,10 @@ public class PaymentService {
             .findByIdForUpdate(payment.getBookingId())
             .orElseThrow(() -> new NotFoundException("Booking not found"));
     if (booking.getStatus() == BookingStatus.PENDING_PAYMENT) {
-      bookingService.confirmBooking(booking.getId());
-      return complete(key, 201, responseOf(payment));
+      BookingResponse confirmed = bookingService.confirmBooking(booking.getId());
+      if ("CONFIRMED".equals(confirmed.status())) {
+        return complete(key, 201, responseOf(payment));
+      }
     }
     // Truthful record, not a mislabeled failure: money was captured but the booking
     // already expired. Seats stay released; the payment is flagged for Admin refund.

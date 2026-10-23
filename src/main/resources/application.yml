@@ -16,7 +16,15 @@ spring:
   flyway:
     enabled: true
     locations: classpath:db/migration
-    baseline-on-migrate: true
+    # Never silently baseline a non-empty database: that can skip V1 and then
+    # apply demo seed data. Provision an empty database or baseline explicitly.
+    baseline-on-migrate: false
+  task:
+    scheduling:
+      # Several independent recovery jobs share this scheduler. A single thread
+      # would let one slow provider lookup block hold and booking expiry.
+      pool:
+        size: 4
 
 server:
   port: 8080

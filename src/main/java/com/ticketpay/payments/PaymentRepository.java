@@ -39,9 +39,23 @@ public interface PaymentRepository extends JpaRepository<Payment, UUID> {
   @QueryHints(@QueryHint(name = "jakarta.persistence.lock.timeout", value = "-2"))
   @Query(
       "select p from Payment p where p.status = :status"
-          + " and (p.lastReconciledAt is null or p.lastReconciledAt < :cutoff)"
+          + " and coalesce(p.lastReconciledAt, p.createdAt) < :cutoff"
           + " order by p.createdAt asc, p.id asc")
   List<Payment> findReconciliable(
+      PaymentStatus status, Instant cutoff, Pageable pageable);
+
+  /**
+   * Crash-left AUTHORIZING rows older than the cutoff. SKIP LOCKED keeps a live
+   * transaction that is finalizing the same row out of this batch.
+   */
+  @Lock(LockModeType.PESSIMISTIC_WRITE)
+  @QueryHints(@QueryHint(name = "jakarta.persistence.lock.timeout", value = "-2"))
+  @Query(
+      "select p from Payment p where p.status = :status"
+          + " and p.createdAt < :cutoff"
+          + " and (p.lastReconciledAt is null or p.lastReconciledAt < :cutoff)"
+          + " order by p.createdAt asc, p.id asc")
+  List<Payment> findStaleAuthorizing(
       PaymentStatus status, Instant cutoff, Pageable pageable);
 
   /**

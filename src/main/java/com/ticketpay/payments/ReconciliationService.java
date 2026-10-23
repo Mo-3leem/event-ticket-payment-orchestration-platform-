@@ -4,6 +4,7 @@ import com.ticketpay.booking.Booking;
 import com.ticketpay.booking.BookingRepository;
 import com.ticketpay.booking.BookingService;
 import com.ticketpay.booking.BookingStatus;
+import com.ticketpay.booking.dto.BookingResponse;
 import com.ticketpay.payments.dto.PaymentResponse;
 import com.ticketpay.payments.dto.ReconciliationRecordDto;
 import com.ticketpay.shared.error.NotFoundException;
@@ -67,6 +68,50 @@ public class ReconciliationService {
     this.minAgeMinutes = minAgeMinutes;
     this.batchSize = batchSize;
     this.tx = new TransactionTemplate(transactionManager);
+  }
+
+  /**
+   * Crash-left AUTHORIZING rows have no live caller to finish them. Once they are
+   * older than the reconciliation age, transition them to UNKNOWN under a row lock;
+   * a late live completion can still apply its definitive result because UNKNOWN is
+   * recoverable. The normal reconciler then performs the provider lookup.
+   *
+   * @return number of rows moved to UNKNOWN.
+   */
+  public int recoverStaleAuthorizingBatch() {
+    Instant cutoff = clock.instant().minusSeconds(minAgeMinutes * 60);
+    List<UUID> candidates =
+        tx.execute(
+            status ->
+                payments
+                    .findStaleAuthorizing(
+                        PaymentStatus.AUTHORIZING, cutoff, PageRequest.of(0, batchSize))
+                    .stream()
+                    .map(Payment::getId)
+                    .toList());
+    int changed = 0;
+    for (UUID paymentId : candidates) {
+      try {
+        Boolean marked =
+            tx.execute(
+                status -> {
+                  Payment payment = payments.findByIdForUpdate(paymentId).orElse(null);
+                  // Candidate discovery already enforced the age cutoff. Re-checking
+                  // the entity timestamp here would use a possibly cached stale value.
+                  if (payment == null || payment.getStatus() != PaymentStatus.AUTHORIZING) {
+                    return false;
+                  }
+                  payment.markUnknown();
+                  return true;
+                });
+        if (Boolean.TRUE.equals(marked)) {
+          changed++;
+        }
+      } catch (RuntimeException failure) {
+        log.warn("Stale AUTHORIZING recovery failed for payment {}: {}", paymentId, failure.toString());
+      }
+    }
+    return changed;
   }
 
   /**
@@ -205,8 +250,12 @@ public class ReconciliationService {
                 bookings
                     .findByIdForUpdate(payment.getBookingId())
                     .orElseThrow(() -> new NotFoundException("Booking not found"));
+            boolean confirmed = false;
             if (booking.getStatus() == BookingStatus.PENDING_PAYMENT) {
-              bookingService.confirmBooking(booking.getId());
+              BookingResponse result = bookingService.confirmBooking(booking.getId());
+              confirmed = "CONFIRMED".equals(result.status());
+            }
+            if (confirmed) {
               records.save(
                   new ReconciliationRecord(
                       payment,
